@@ -1,0 +1,15 @@
+*
+
+!src
+!src/*
+!include
+!include/*
+!instances
+!instances/*/
+!instances/*/*
+!tests
+!tests/*
+
+!makefile
+!README.md
+!.gitignore
