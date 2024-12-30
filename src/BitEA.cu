@@ -38,10 +38,7 @@ __global__ void setup_kernel(unsigned long seed)
 __device__ inline int __rand()
 {
     int id = threadIdx.x + blockIdx.x * blockDim.x;
-    // Get and advance state in one call
     int value = curand(&curand_state[id]);
-    // Force another advance of the state
-    curand(&curand_state[id]);
     if (value < 0)
         return -value;
     return value;
@@ -61,19 +58,18 @@ __device__ void unlock_pair(int p1, int p2, int *mutexes, int population_size)
 
 __device__ int __popcountl(uint64_t n)
 {
-    int cnt = 0;
-    while (n)
-    {
-        n &= n - 1; // key point
-        ++cnt;
-    }
-    return cnt;
+    return __popcll(n);
+    // int cnt = 0;
+    // while (n)
+    // {
+    //     n &= n - 1; // key point
+    //     ++cnt;
+    // }
+    // return cnt;
 }
 
 __device__ int __count_conflicts(int graph_size, const block_t *color, const block_t *edges, int *conflict_count)
 {
-    block_t(*edges_p)[][TOTAL_BLOCK_COUNT] = (block_t(*)[][TOTAL_BLOCK_COUNT])edges;
-
     int i, j, total_conflicts = 0;
     for (i = 0; i < graph_size; i++)
     {
@@ -81,7 +77,7 @@ __device__ int __count_conflicts(int graph_size, const block_t *color, const blo
         {
             conflict_count[i] = 0;
             for (j = 0; j < TOTAL_BLOCK_NUM(graph_size); j++)
-                conflict_count[i] += __popcountl(color[j] & (*edges_p)[i][j]);
+                conflict_count[i] += __popcountl(color[j] & edges[i * TOTAL_BLOCK_NUM(graph_size) + j]);
             total_conflicts += conflict_count[i];
         }
     }
@@ -91,15 +87,13 @@ __device__ int __count_conflicts(int graph_size, const block_t *color, const blo
 
 __device__ void fix_conflicts(int graph_size, const block_t *edges, const int *weights, int *conflict_count, int *total_conflicts, block_t *color, block_t *pool, int *pool_total)
 {
-    block_t(*edges_p)[][TOTAL_BLOCK_COUNT] = (block_t(*)[][TOTAL_BLOCK_COUNT])edges;
-
     // Keep removing problematic vertices until all conflicts are gone.
     int i, worst_vert = 0, vert_block;
     block_t vert_mask;
     while (*total_conflicts > 0)
     {
         // Find the vertex with the most conflicts.
-        for (i = 0; i < SIZE; i++)
+        for (i = 0; i < graph_size; i++)
         {
             if (CHECK_COLOR(color, i) &&
                 (conflict_count[worst_vert] < conflict_count[i] ||
@@ -113,8 +107,8 @@ __device__ void fix_conflicts(int graph_size, const block_t *edges, const int *w
         // Update other conflict counters.
         vert_mask = MASK(worst_vert);
         vert_block = BLOCK_INDEX(worst_vert);
-        for (i = 0; i < SIZE; i++)
-            if (CHECK_COLOR(color, i) && ((*edges_p)[i][vert_block] & vert_mask))
+        for (i = 0; i < graph_size; i++)
+            if (CHECK_COLOR(color, i) && (edges[i * TOTAL_BLOCK_NUM(graph_size) + vert_block] & vert_mask))
                 conflict_count[i]--;
 
         // Remove the vertex.
@@ -128,12 +122,13 @@ __device__ void fix_conflicts(int graph_size, const block_t *edges, const int *w
     }
 }
 
+
 __device__ void merge_and_fix(int graph_size, const block_t *edges, const int *weights, const block_t **parent_color, block_t *child_color, block_t *pool, int *pool_count, block_t *used_vertex_list, int *used_vertex_count, int *conflict_count)
 {
     // Merge the two colors
     int temp_v_count = 0;
     if (parent_color[0] != NULL && parent_color[1] != NULL)
-        for (int i = 0; i < (TOTAL_BLOCK_COUNT); i++)
+        for (int i = 0; i < (TOTAL_BLOCK_NUM(graph_size)); i++)
         {
             child_color[i] = ((parent_color[0][i] | parent_color[1][i]) & ~(used_vertex_list[i]));
             temp_v_count += __popcountl(child_color[i]);
@@ -142,14 +137,14 @@ __device__ void merge_and_fix(int graph_size, const block_t *edges, const int *w
         }
 
     else if (parent_color[0] != NULL)
-        for (int i = 0; i < (TOTAL_BLOCK_COUNT); i++)
+        for (int i = 0; i < (TOTAL_BLOCK_NUM(graph_size)); i++)
         {
             child_color[i] = (parent_color[0][i] & ~(used_vertex_list[i]));
             temp_v_count += __popcountl(child_color[i]);
         }
 
     else if (parent_color[1] != NULL)
-        for (int i = 0; i < (TOTAL_BLOCK_COUNT); i++)
+        for (int i = 0; i < (TOTAL_BLOCK_NUM(graph_size)); i++)
         {
             child_color[i] = (parent_color[1][i] & ~(used_vertex_list[i]));
             temp_v_count += __popcountl(child_color[i]);
@@ -158,22 +153,22 @@ __device__ void merge_and_fix(int graph_size, const block_t *edges, const int *w
     (*used_vertex_count) += temp_v_count;
 
     // Merge the pool with the new color
-    for (int i = 0; i < (TOTAL_BLOCK_COUNT); i++)
+    for (int i = 0; i < (TOTAL_BLOCK_NUM(graph_size)); i++)
     {
         child_color[i] |= pool[i];
         used_vertex_list[i] |= child_color[i];
     }
 
-    // memset(pool, 0, (TOTAL_BLOCK_COUNT) * sizeof(block_t));
-    for (int i = 0; i < TOTAL_BLOCK_COUNT; i++)
+    // memset(pool, 0, (TOTAL_BLOCK_NUM(graph_size)) * sizeof(block_t));
+    for (int i = 0; i < TOTAL_BLOCK_NUM(graph_size); i++)
         pool[i] = 0;
     (*pool_count) = 0;
 
-    for (int i = 0; i < SIZE; i++)
+    for (int i = 0; i < graph_size; i++)
         conflict_count[i] = 0;
 
     // Count conflicts.
-    int total_conflicts = __count_conflicts(SIZE, child_color, edges, conflict_count);
+    int total_conflicts = __count_conflicts(graph_size, child_color, edges, conflict_count);
 
     // Fix the conflicts.
     fix_conflicts(graph_size, edges, weights, conflict_count, &total_conflicts, child_color, pool, pool_count);
@@ -181,15 +176,12 @@ __device__ void merge_and_fix(int graph_size, const block_t *edges, const int *w
 
 __device__ void search_back(int graph_size, const block_t *edges, const int *weights, block_t *child, int color_count, block_t *pool, int *pool_count)
 {
-    block_t(*edges_p)[][TOTAL_BLOCK_COUNT] = (block_t(*)[][TOTAL_BLOCK_COUNT])edges;
-    block_t(*child_p)[][TOTAL_BLOCK_COUNT] = (block_t(*)[][TOTAL_BLOCK_COUNT])child;
-
     int conflict_count, last_conflict, last_conflict_block = 0;
     block_t i_mask, temp_mask, last_conflict_mask = 0;
     int i, j, k, i_block;
 
     // Search back and try placing vertices from the pool in previous colors.
-    for (i = 0; i < SIZE && (*pool_count) > 0; i++)
+    for (i = 0; i < graph_size && (*pool_count) > 0; i++)
     {
         i_block = BLOCK_INDEX(i);
         i_mask = MASK(i);
@@ -202,9 +194,9 @@ __device__ void search_back(int graph_size, const block_t *edges, const int *wei
             {
                 // Count the possible conflicts in this color.
                 conflict_count = 0;
-                for (k = 0; k < TOTAL_BLOCK_COUNT; k++)
+                for (k = 0; k < TOTAL_BLOCK_NUM(graph_size); k++)
                 {
-                    temp_mask = (*child_p)[j][k] & (*edges_p)[i][k];
+                    temp_mask = child[j * TOTAL_BLOCK_NUM(graph_size) + k] & edges[i * TOTAL_BLOCK_NUM(graph_size) + k];
                     if (temp_mask)
                     {
                         conflict_count += __popcountl(temp_mask);
@@ -219,7 +211,7 @@ __device__ void search_back(int graph_size, const block_t *edges, const int *wei
                 // Place immediately if there are no conflicts.
                 if (conflict_count == 0)
                 {
-                    (*child_p)[j][i_block] |= i_mask;
+                    child[j * TOTAL_BLOCK_NUM(graph_size) + i_block] |= i_mask;
                     pool[i_block] &= ~i_mask;
                     (*pool_count)--;
                     break;
@@ -229,10 +221,10 @@ __device__ void search_back(int graph_size, const block_t *edges, const int *wei
                 }
                 else if (conflict_count == 1 && weights[last_conflict] < weights[i])
                 {
-                    (*child_p)[j][i_block] |= i_mask;
+                    child[j * TOTAL_BLOCK_NUM(graph_size) + i_block] |= i_mask;
                     pool[i_block] &= ~i_mask;
 
-                    (*child_p)[j][last_conflict_block] &= ~last_conflict_mask;
+                    child[j * TOTAL_BLOCK_NUM(graph_size) + last_conflict_block] &= ~last_conflict_mask;
                     pool[last_conflict_block] |= last_conflict_mask;
                     break;
                 }
@@ -241,19 +233,19 @@ __device__ void search_back(int graph_size, const block_t *edges, const int *wei
     }
 }
 
+
 __device__ void local_search(int graph_size, const block_t *edges, const int *weights, block_t *child, int color_count, block_t *pool, int *pool_count)
 {
-    block_t(*edges_p)[][TOTAL_BLOCK_COUNT] = (block_t(*)[][TOTAL_BLOCK_COUNT])edges;
-    block_t(*child_p)[][TOTAL_BLOCK_COUNT] = (block_t(*)[][TOTAL_BLOCK_COUNT])child;
-
     int i, j, k, h, i_block;
     block_t i_mask, temp_mask;
     int competition;
     int conflict_count;
-    block_t conflict_array[TOTAL_BLOCK_COUNT];
+    block_t *conflict_array = (block_t *)malloc(TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
+    for (i = 0; i < TOTAL_BLOCK_NUM(graph_size); i++)
+        conflict_array[i] = 0;
 
     // Search back and try placing vertices from the pool in the colors.
-    for (i = 0; i < SIZE && (*pool_count) > 0; i++)
+    for (i = 0; i < graph_size && (*pool_count) > 0; i++)
     {
         i_block = BLOCK_INDEX(i);
         i_mask = MASK(i);
@@ -267,9 +259,9 @@ __device__ void local_search(int graph_size, const block_t *edges, const int *we
                 // Count conflicts and calculate competition
                 conflict_count = 0;
                 competition = 0;
-                for (k = 0; k < TOTAL_BLOCK_COUNT; k++)
+                for (k = 0; k < TOTAL_BLOCK_NUM(graph_size); k++)
                 {
-                    conflict_array[k] = (*edges_p)[i][k] & (*child_p)[j][k];
+                    conflict_array[k] = edges[i * TOTAL_BLOCK_NUM(graph_size) + k] & child[j * TOTAL_BLOCK_NUM(graph_size) + k];
                     if (conflict_array[k])
                     {
                         temp_mask = conflict_array[k];
@@ -283,7 +275,7 @@ __device__ void local_search(int graph_size, const block_t *edges, const int *we
                 // Place immediately if there are no conflicts.
                 if (competition == 0)
                 {
-                    (*child_p)[j][i_block] |= i_mask;
+                    child[j * TOTAL_BLOCK_NUM(graph_size) + i_block] |= i_mask;
                     pool[i_block] &= ~i_mask;
                     (*pool_count) += conflict_count - 1;
                     break;
@@ -296,13 +288,13 @@ __device__ void local_search(int graph_size, const block_t *edges, const int *we
                 }
                 else if (competition < weights[i])
                 {
-                    for (k = 0; k < TOTAL_BLOCK_COUNT; k++)
+                    for (k = 0; k < TOTAL_BLOCK_NUM(graph_size); k++)
                     {
-                        (*child_p)[j][k] &= ~conflict_array[k];
+                        child[j * TOTAL_BLOCK_NUM(graph_size) + k] &= ~conflict_array[k];
                         pool[k] |= conflict_array[k];
                     }
 
-                    (*child_p)[j][i_block] |= i_mask;
+                    child[j * TOTAL_BLOCK_NUM(graph_size) + i_block] |= i_mask;
                     pool[i_block] &= ~i_mask;
                     (*pool_count) += conflict_count - 1;
                     break;
@@ -310,7 +302,10 @@ __device__ void local_search(int graph_size, const block_t *edges, const int *we
             }
         }
     }
+
+    free(conflict_array);
 }
+
 
 __device__ int get_rand_color(int max_color_num, int colors_used, block_t used_color_list[])
 {
@@ -349,32 +344,30 @@ __device__ int get_rand_color(int max_color_num, int colors_used, block_t used_c
 __device__ int crossover(int graph_size, const block_t *edges, const int *weights, int color_num1, int color_num2, const block_t *parent1, const block_t *parent2,
                          int target_color_count, block_t *child, int *child_color_count, int *uncolored, int *conflict_count)
 {
-    const block_t(*parent1_p)[][TOTAL_BLOCK_COUNT] = (block_t(*)[][TOTAL_BLOCK_COUNT])parent1;
-    const block_t(*parent2_p)[][TOTAL_BLOCK_COUNT] = (block_t(*)[][TOTAL_BLOCK_COUNT])parent2;
-    block_t(*child_p)[][TOTAL_BLOCK_COUNT] = (block_t(*)[][TOTAL_BLOCK_COUNT])child;
-
     // max number of colors of the two parents.
-    // int max_color_num = color_num1 > color_num2 ? color_num1 : color_num2;
+    int max_color_num = color_num1 > color_num2 ? color_num1 : color_num2;
 
     // list of used colors in the parents.
-    block_t used_color_list[2][TOTAL_BLOCK_NUM(MAX_COLOR)];
-    for (int i = 0; i < TOTAL_BLOCK_NUM(MAX_COLOR); i++)
+    block_t **used_color_list = (block_t **)malloc(2 * sizeof(block_t *));
+    used_color_list[0] = (block_t *)malloc(TOTAL_BLOCK_NUM(max_color_num) * sizeof(block_t));
+    used_color_list[1] = (block_t *)malloc(TOTAL_BLOCK_NUM(max_color_num) * sizeof(block_t));
+    for (int i = 0; i < TOTAL_BLOCK_NUM(max_color_num); i++)
     {
         used_color_list[0][i] = 0;
         used_color_list[1][i] = 0;
     }
 
     // list of used vertices in the parents.
-    block_t used_vertex_list[TOTAL_BLOCK_COUNT];
-    for (int i = 0; i < TOTAL_BLOCK_COUNT; i++)
+    block_t *used_vertex_list = (block_t *)malloc(TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
+    for (int i = 0; i < TOTAL_BLOCK_NUM(graph_size); i++)
     {
         used_vertex_list[i] = 0;
     }
     int used_vertex_count = 0;
 
     // Pool.
-    block_t pool[TOTAL_BLOCK_COUNT];
-    for (int i = 0; i < TOTAL_BLOCK_COUNT; i++)
+    block_t *pool = (block_t *)malloc(TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
+    for (int i = 0; i < TOTAL_BLOCK_NUM(graph_size); i++)
     {
         pool[i] = 0;
     }
@@ -386,15 +379,15 @@ __device__ int crossover(int graph_size, const block_t *edges, const int *weight
     for (i = 0; i < target_color_count; i++)
     {
         // The child still has vertices that weren't used.
-        if (used_vertex_count < SIZE)
+        if (used_vertex_count < graph_size)
         {
             // Pick 2 random colors.
             color1 = get_rand_color(color_num1, i, used_color_list[0]);
             color2 = get_rand_color(color_num2, i, used_color_list[1]);
-            chosen_parent_colors[0] = color1 == -1 ? NULL : (*parent1_p)[color1];
-            chosen_parent_colors[1] = color2 == -1 ? NULL : (*parent2_p)[color2];
+            chosen_parent_colors[0] = color1 == -1 ? NULL : &parent1[color1 * TOTAL_BLOCK_NUM(graph_size)];
+            chosen_parent_colors[1] = color2 == -1 ? NULL : &parent2[color2 * TOTAL_BLOCK_NUM(graph_size)];
 
-            merge_and_fix(graph_size, edges, weights, chosen_parent_colors, (*child_p)[i], pool, &pool_count, used_vertex_list, &used_vertex_count, conflict_count);
+            merge_and_fix(graph_size, edges, weights, chosen_parent_colors, &child[i * TOTAL_BLOCK_NUM(graph_size)], pool, &pool_count, used_vertex_list, &used_vertex_count, conflict_count);
 
             // If all of the vertices were used and the pool is empty, exit the loop.
         }
@@ -410,16 +403,15 @@ __device__ int crossover(int graph_size, const block_t *edges, const int *weight
     last_color = i;
 
     // If not all the vertices were visited, drop them in the pool.
-    if (used_vertex_count < SIZE)
+    if (used_vertex_count < graph_size)
     {
-        for (j = 0; j < (TOTAL_BLOCK_COUNT); j++)
+        for (j = 0; j < TOTAL_BLOCK_NUM(graph_size); j++)
             pool[j] |= ~used_vertex_list[j];
-        pool[TOTAL_BLOCK_COUNT] &= ((0xFFFFFFFFFFFFFFFF) >> (TOTAL_BLOCK_COUNT * sizeof(block_t) * 8 - SIZE));
+        pool[TOTAL_BLOCK_NUM(graph_size)] &= ((0xFFFFFFFFFFFFFFFF) >> (TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t) * 8 - graph_size));
 
-        pool_count += (SIZE - used_vertex_count);
-        used_vertex_count = SIZE;
-        // memset(used_vertex_list, 0xFF, (TOTAL_BLOCK_COUNT) * sizeof(block_t));
-        for (i = 0; i < TOTAL_BLOCK_COUNT; i++)
+        pool_count += (graph_size - used_vertex_count);
+        used_vertex_count = graph_size;
+        for (i = 0; i < TOTAL_BLOCK_NUM(graph_size); i++)
             used_vertex_list[i] = 0xFF;
     }
 
@@ -428,18 +420,17 @@ __device__ int crossover(int graph_size, const block_t *edges, const int *weight
     // If the pool is not empty, randomly allocate the remaining vertices in the colors.
     int fitness = 0, temp_block;
     block_t temp_mask;
-    // printf("Pool count: %d\n", pool_count);
     if (pool_count > 0)
     {
         int color_num;
-        for (i = 0; i < SIZE; i++)
+        for (i = 0; i < graph_size; i++)
         {
             temp_block = BLOCK_INDEX(i);
             temp_mask = MASK(i);
             if (pool[temp_block] & temp_mask)
             {
                 color_num = __rand() % target_color_count;
-                (*child_p)[color_num][temp_block] |= temp_mask;
+                child[color_num * TOTAL_BLOCK_NUM(graph_size) + temp_block] |= temp_mask;
 
                 if (color_num + 1 > last_color)
                     last_color = color_num + 1;
@@ -447,15 +438,17 @@ __device__ int crossover(int graph_size, const block_t *edges, const int *weight
                 fitness += weights[i];
             }
         }
-
-        // All of the vertices were allocated and no conflicts were detected.
     }
     else
     {
         fitness = 0;
     }
 
-    // printf("Fitness: %d | uncolored: %d | child_color_count: %d\n", fitness, pool_count, last_color);
+    free(used_color_list[0]);
+    free(used_color_list[1]);
+    free(used_color_list);
+    free(used_vertex_list);
+    free(pool);
 
     *uncolored = pool_count;
     *child_color_count = last_color;
@@ -519,7 +512,7 @@ __global__ void d_BitEA(int graph_size, block_t **population, block_t **children
 
         } while ((!parent1_locked || !parent2_locked));
 
-        for (int i = 0; i < base_color_count * TOTAL_BLOCK_COUNT; i++)
+        for (int i = 0; i < base_color_count * TOTAL_BLOCK_NUM(graph_size); i++)
         {
             children[id][i] = 0;
         }
@@ -537,7 +530,7 @@ __global__ void d_BitEA(int graph_size, block_t **population, block_t **children
         {
             // Copy child to bad_parent both memory is in device
             // memmove(population[bad_parent], child, (TOTAL_BLOCK_NUM(graph_size))*base_color_count*sizeof(block_t));
-            for (int i = 0; i < base_color_count * TOTAL_BLOCK_COUNT; i++)
+            for (int i = 0; i < base_color_count * TOTAL_BLOCK_NUM(graph_size); i++)
             {
                 population[bad_parent][i] = children[id][i];
             }
@@ -555,7 +548,7 @@ __global__ void d_BitEA(int graph_size, block_t **population, block_t **children
         // Make the target harder if it was found.
         if (temp_fitness == 0)
         {
-            // is_valid1(SIZE, edges, color_count[best_i], population[best_i]);
+            // is_valid1(graph_size, edges, color_count[best_i], population[best_i]);
             target_color = child_colors - 1;
         }
 
@@ -575,8 +568,8 @@ __global__ void d_BitEA(int graph_size, block_t **population, block_t **children
     // Copy the best solution to the global memory
     if (id == 0)
     {
-        // memcpy(best_solution, population[best_i], base_color_count * TOTAL_BLOCK_COUNT * sizeof(block_t));
-        for (int i = 0; i < base_color_count * TOTAL_BLOCK_COUNT; i++)
+        // memcpy(best_solution, population[best_i], base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
+        for (int i = 0; i < base_color_count * TOTAL_BLOCK_NUM(graph_size); i++)
         {
             best_solution[i] = population[best_i][i];
         }
@@ -592,34 +585,32 @@ __global__ void d_BitEA(int graph_size, block_t **population, block_t **children
 
 int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int base_color_count, int max_gen_num, block_t *best_solution, int *best_fitness, float *best_solution_time, int *uncolored_num)
 {
-    // printf("BitEA\n");
-
-    // int best_color_count = 0;
-
     int num_threads = 256; // Threads per block
-    int num_blocks = ((population_size) + num_threads - 1) / num_threads;
+    int num_blocks = 1; //((population_size) + num_threads - 1) / num_threads;
+
+    int total_threads = num_threads * num_blocks;
 
     // // Create the random population.
     block_t **population = (block_t **)malloc(population_size * sizeof(block_t *));
-    block_t **children = (block_t **)malloc(num_threads * sizeof(block_t *));
+    block_t **children = (block_t **)malloc(total_threads * sizeof(block_t *));
     int *color_count = (int *)malloc(population_size * sizeof(int));
     int *uncolored = (int *)malloc(population_size * sizeof(int));
     int *fitness = (int *)malloc(population_size * sizeof(int));
     int *best_i_result = (int *)malloc(sizeof(int));
 
-    int **conflict_count = (int **)malloc(num_threads * sizeof(int *));
+    int **conflict_count = (int **)malloc(total_threads * sizeof(int *));
 
-    for (int i = 0; i < num_threads; i++)
+    for (int i = 0; i < total_threads; i++)
     {
-        children[i] = (block_t *)malloc(base_color_count * TOTAL_BLOCK_COUNT * sizeof(block_t));
-        memset(children[i], 0, base_color_count * TOTAL_BLOCK_COUNT * sizeof(block_t));
-        conflict_count[i] = (int *)malloc(SIZE * sizeof(int));
-        memset(conflict_count[i], 0, SIZE * sizeof(int));
+        children[i] = (block_t *)malloc(base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
+        memset(children[i], 0, base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
+        conflict_count[i] = (int *)malloc(graph_size * sizeof(int));
+        memset(conflict_count[i], 0, graph_size * sizeof(int));
     }
     for (int i = 0; i < population_size; i++)
     {
-        population[i] = (block_t *)malloc(base_color_count * TOTAL_BLOCK_COUNT * sizeof(block_t));
-        memset(population[i], 0, base_color_count * TOTAL_BLOCK_COUNT * sizeof(block_t));
+        population[i] = (block_t *)malloc(base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
+        memset(population[i], 0, base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
         uncolored[i] = base_color_count;
         color_count[i] = base_color_count;
         fitness[i] = __INT_MAX__;
@@ -658,7 +649,7 @@ int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int
     for (int i = 0; i < population_size; i++)
     {
         block_t *d_row;
-        size_t row_size = base_color_count * TOTAL_BLOCK_NUM((size_t)SIZE) * sizeof(block_t);
+        size_t row_size = base_color_count * TOTAL_BLOCK_NUM((size_t)graph_size) * sizeof(block_t);
 
         // Allocate memory for the row
         CUDA_CHECK(cudaMalloc(&d_row, row_size));
@@ -671,12 +662,12 @@ int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int
     }
 
     // Allocate device memory for children
-    CUDA_CHECK(cudaMalloc(&d_children, num_threads * sizeof(block_t *));)
+    CUDA_CHECK(cudaMalloc(&d_children, total_threads * sizeof(block_t *));)
     // Allocate and copy each row
-    for (int i = 0; i < num_threads; i++)
+    for (int i = 0; i < total_threads; i++)
     {
         block_t *d_row;
-        size_t row_size = base_color_count * TOTAL_BLOCK_NUM((size_t)SIZE) * sizeof(block_t);
+        size_t row_size = base_color_count * TOTAL_BLOCK_NUM((size_t)graph_size) * sizeof(block_t);
 
         // Allocate memory for the row
         CUDA_CHECK(cudaMalloc(&d_row, row_size);)
@@ -688,11 +679,11 @@ int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int
         CUDA_CHECK(cudaMemcpy(&d_children[i], &d_row, sizeof(block_t *), cudaMemcpyHostToDevice);)
     }
 
-    CUDA_CHECK(cudaMalloc(&d_conflict_count, num_threads * sizeof(int *));)
-    for (int i = 0; i < num_threads; i++)
+    CUDA_CHECK(cudaMalloc(&d_conflict_count, total_threads * sizeof(int *));)
+    for (int i = 0; i < total_threads; i++)
     {
         int *d_row;
-        size_t row_size = SIZE * sizeof(int);
+        size_t row_size = graph_size * sizeof(int);
 
         // Allocate memory for the row
         CUDA_CHECK(cudaMalloc(&d_row, row_size);)
@@ -704,11 +695,11 @@ int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int
         CUDA_CHECK(cudaMemcpy(&d_conflict_count[i], &d_row, sizeof(int *), cudaMemcpyHostToDevice);)
     }
 
-    CUDA_CHECK(cudaMalloc(&d_edges, SIZE * TOTAL_BLOCK_COUNT * sizeof(block_t));)
-    CUDA_CHECK(cudaMemcpy(d_edges, edges, SIZE * TOTAL_BLOCK_COUNT * sizeof(block_t), cudaMemcpyHostToDevice);)
+    CUDA_CHECK(cudaMalloc(&d_edges, graph_size * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));)
+    CUDA_CHECK(cudaMemcpy(d_edges, edges, graph_size * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t), cudaMemcpyHostToDevice);)
 
-    CUDA_CHECK(cudaMalloc(&d_weights, SIZE * sizeof(int));)
-    CUDA_CHECK(cudaMemcpy(d_weights, weights, SIZE * sizeof(int), cudaMemcpyHostToDevice);)
+    CUDA_CHECK(cudaMalloc(&d_weights, graph_size * sizeof(int));)
+    CUDA_CHECK(cudaMemcpy(d_weights, weights, graph_size * sizeof(int), cudaMemcpyHostToDevice);)
 
     CUDA_CHECK(cudaMalloc(&d_color_count, population_size * sizeof(int));)
     CUDA_CHECK(cudaMemcpy(d_color_count, color_count, population_size * sizeof(int), cudaMemcpyHostToDevice);)
@@ -719,7 +710,7 @@ int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int
     CUDA_CHECK(cudaMalloc(&d_fitness, population_size * sizeof(int));)
     CUDA_CHECK(cudaMemcpy(d_fitness, fitness, population_size * sizeof(int), cudaMemcpyHostToDevice);)
 
-    CUDA_CHECK(cudaMalloc(&d_best_solution, base_color_count * TOTAL_BLOCK_NUM((size_t)SIZE) * sizeof(block_t));)
+    CUDA_CHECK(cudaMalloc(&d_best_solution, base_color_count * TOTAL_BLOCK_NUM((size_t)graph_size) * sizeof(block_t));)
     CUDA_CHECK(cudaMalloc(&d_best_fitness, sizeof(int));)
     CUDA_CHECK(cudaMalloc(&d_total_execution_time, sizeof(float));)
     CUDA_CHECK(cudaMalloc(&d_best_color_count, sizeof(int));)
@@ -733,7 +724,7 @@ int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int
 
     // Allocate memory for curand_state
     curandState *d_curand_state;
-    CUDA_CHECK(cudaMalloc(&d_curand_state, num_blocks * num_threads * sizeof(curandState)));
+    CUDA_CHECK(cudaMalloc(&d_curand_state, total_threads * sizeof(curandState)));
     CUDA_CHECK(cudaMemcpyToSymbol(curand_state, &d_curand_state, sizeof(curandState *)));
 
     // Initialize curand_state
@@ -767,8 +758,18 @@ int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int
     // Wait for the kernel to finish.
     CUDA_CHECK(cudaDeviceSynchronize());
 
+    #ifdef _WIN32
+    auto end_time = std::chrono::high_resolution_clock::now();
+    *best_solution_time = std::chrono::duration_cast<std::chrono::duration<float>>(end_time - start_time).count();
+    #endif
+    #ifdef __linux__
+    struct timespec end_time;
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+    *best_solution_time = (end_time.tv_sec - start_time.tv_sec) + (end_time.tv_nsec - start_time.tv_nsec) / 1000000000.0;
+    #endif
+
     // Copy the results back to the host.
-    CUDA_CHECK(cudaMemcpy(best_solution, d_best_solution, base_color_count * TOTAL_BLOCK_NUM((size_t)SIZE) * sizeof(block_t), cudaMemcpyDeviceToHost);)
+    CUDA_CHECK(cudaMemcpy(best_solution, d_best_solution, base_color_count * TOTAL_BLOCK_NUM((size_t)graph_size) * sizeof(block_t), cudaMemcpyDeviceToHost);)
     CUDA_CHECK(cudaMemcpy(best_fitness, d_best_fitness, sizeof(int), cudaMemcpyDeviceToHost);)
     // CUDA_CHECK(cudaMemcpy(best_solution_time, d_total_execution_time, sizeof(float), cudaMemcpyDeviceToHost);)
     CUDA_CHECK(cudaMemcpy(uncolored_num, d_best_color_count, sizeof(int), cudaMemcpyDeviceToHost);)
@@ -776,8 +777,8 @@ int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int
     CUDA_CHECK(cudaMemcpy(fitness, d_fitness, population_size * sizeof(int), cudaMemcpyDeviceToHost);)
     CUDA_CHECK(cudaMemcpy(color_count, d_color_count, population_size * sizeof(int), cudaMemcpyDeviceToHost);)
     CUDA_CHECK(cudaMemcpy(uncolored, d_uncolored, population_size * sizeof(int), cudaMemcpyDeviceToHost);)
-    CUDA_CHECK(cudaMemcpy(edges, d_edges, SIZE * TOTAL_BLOCK_COUNT * sizeof(block_t), cudaMemcpyDeviceToHost);)
-    CUDA_CHECK(cudaMemcpy(weights, d_weights, SIZE * sizeof(int), cudaMemcpyDeviceToHost);)
+    CUDA_CHECK(cudaMemcpy(edges, d_edges, graph_size * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t), cudaMemcpyDeviceToHost);)
+    CUDA_CHECK(cudaMemcpy(weights, d_weights, graph_size * sizeof(int), cudaMemcpyDeviceToHost);)
 
     // Free device memory
     CUDA_CHECK(cudaFree(d_population);)
@@ -807,18 +808,22 @@ int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int
     CUDA_CHECK(cudaFree(d_best_i_result);)
     CUDA_CHECK(cudaFree(d_mutexes);)
 
-    #ifdef _WIN32
-    auto end_time = std::chrono::high_resolution_clock::now();
-    *best_solution_time = std::chrono::duration_cast<std::chrono::duration<float>>(end_time - start_time).count();
-    #endif
-    #ifdef __linux__
-    struct timespec end_time;
-    clock_gettime(CLOCK_MONOTONIC, &end_time);
-    *best_solution_time = (end_time.tv_sec - start_time.tv_sec) + (end_time.tv_nsec - start_time.tv_nsec) / 1000000000.0;
-    #endif
-
     // Free host memory
-    //
+    for (int i = 0; i < population_size; i++)
+    {
+        free(population[i]);
+    }
+    free(population);
+    for (int i = 0; i < total_threads; i++)
+    {
+        free(children[i]);
+        free(conflict_count[i]);
+    }
+    free(children);
+    free(conflict_count);
+    free(color_count);
+    free(uncolored);
+    free(fitness);
 
     return color_count[*best_i_result];
 }

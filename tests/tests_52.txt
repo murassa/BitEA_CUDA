@@ -1,0 +1,1 @@
+64 6 200000 100 5 instances/DIMACS/queen8_8gb.edgelist instances/DIMACS/queen8_8gb.col.w solutions/DIMACS/queen8_8gb.solution.txt times/DIMACS/queen8_8gb.times.txt 

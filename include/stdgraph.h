@@ -13,15 +13,19 @@
 #define MASK(bit_index)                     ((block_t)1 << MASK_INDEX(bit_index))
 #define TOTAL_BLOCK_NUM(vertex_num)         (BLOCK_INDEX(vertex_num-1)+1)
 
-#define SET_EDGE(vertex1, vertex2, edges)   edges[vertex1][BLOCK_INDEX(vertex2)] |=  MASK(vertex2); edges[vertex2][BLOCK_INDEX(vertex1)] |=  MASK(vertex1);
+// #define SET_EDGE(vertex1, vertex2, edges)   edges[vertex1][BLOCK_INDEX(vertex2)] |=  MASK(vertex2); edges[vertex2][BLOCK_INDEX(vertex1)] |=  MASK(vertex1);
+#define SET_EDGE(vertex1, vertex2, edges, size)   edges[vertex1 * TOTAL_BLOCK_NUM(size) + BLOCK_INDEX(vertex2)] |=  MASK(vertex2); edges[vertex2 * TOTAL_BLOCK_NUM(size) + BLOCK_INDEX(vertex1)] |=  MASK(vertex1);
 
 #define CHECK_COLOR(color, vertex)      (color[BLOCK_INDEX(vertex)] & MASK(vertex))
+#define CHECK_COLOR_SIZE(color, vertex, size)      (color[BLOCK_INDEX(vertex)] & MASK(vertex))
 #define SET_COLOR(color, vertex)        color[BLOCK_INDEX(vertex)] |=  MASK(vertex)
 #define RESET_COLOR(color, vertex)      color[BLOCK_INDEX(vertex)] &= ~MASK(vertex)
-#define SIZE 125
+// #define SIZE 125
 #define TOTAL_BLOCK_COUNT TOTAL_BLOCK_NUM(SIZE)
-#define MAX_COLOR 6
+// #define MAX_COLOR 6
+#ifndef __INT_MAX__
 #define __INT_MAX__ 2147483647
+#endif
 #define MAX_ATTEMPTS 1000
 
 
@@ -70,14 +74,7 @@ void graph_color_random(
     int max_color
 );
 
-void pop_complex_random (
-    int graph_size, 
-    const block_t *edges, 
-    const int *weights,
-    int pop_size,
-    block_t **population, 
-    int max_color
-);
+void pop_complex_random(int graph_size, block_t *edges, const int *weights, int pop_size, block_t **population, int max_color);
 
 int count_conflicts(
     int graph_size, 

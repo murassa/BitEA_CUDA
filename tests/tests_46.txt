@@ -1,0 +1,1 @@
+100 6 200000 100 5 instances/DIMACS/queen10_10gb.edgelist instances/DIMACS/queen10_10gb.col.w solutions/DIMACS/queen10_10gb.solution.txt times/DIMACS/queen10_10gb.times.txt 

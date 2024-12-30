@@ -1,0 +1,1 @@
+125 6 200000 100 5 instances/DIMACS/DSJC125.1gb.edgelist instances/DIMACS/DSJC125.1gb.col.w solutions/DIMACS/DSJC125.1gb.solution.txt times/DIMACS/DSJC125.1gb.times.txt 

@@ -1,0 +1,1 @@
+40 6 200000 100 5 instances/DIMACS/GEOM40a.edgelist instances/DIMACS/GEOM40a.col.w solutions/DIMACS/GEOM40a.solution.txt times/DIMACS/GEOM40a.times.txt 

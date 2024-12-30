@@ -1,0 +1,1 @@
+121 6 200000 100 5 instances/DIMACS/queen11_11gb.edgelist instances/DIMACS/queen11_11gb.col.w solutions/DIMACS/queen11_11gb.solution.txt times/DIMACS/queen11_11gb.times.txt 

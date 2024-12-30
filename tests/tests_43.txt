@@ -1,0 +1,1 @@
+191 6 200000 100 5 instances/DIMACS/myciel7g.edgelist instances/DIMACS/myciel7g.col.w solutions/DIMACS/myciel7g.solution.txt times/DIMACS/myciel7g.times.txt 

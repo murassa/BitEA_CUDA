@@ -1,0 +1,1 @@
+75 6 200000 100 5 instances/DIMACS/R75_9g.edgelist instances/DIMACS/R75_9g.col.w solutions/DIMACS/R75_9g.solution.txt times/DIMACS/R75_9g.times.txt 

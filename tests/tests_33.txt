@@ -1,0 +1,1 @@
+80 6 200000 100 5 instances/DIMACS/GEOM80.edgelist instances/DIMACS/GEOM80.col.w solutions/DIMACS/GEOM80.solution.txt times/DIMACS/GEOM80.times.txt 

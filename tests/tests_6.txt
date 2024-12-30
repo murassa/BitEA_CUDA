@@ -1,0 +1,1 @@
+100 6 200000 100 5 instances/DIMACS/GEOM100.edgelist instances/DIMACS/GEOM100.col.w solutions/DIMACS/GEOM100.solution.txt times/DIMACS/GEOM100.times.txt 

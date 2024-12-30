@@ -1,0 +1,1 @@
+90 6 200000 100 5 instances/DIMACS/GEOM90a.edgelist instances/DIMACS/GEOM90a.col.w solutions/DIMACS/GEOM90a.solution.txt times/DIMACS/GEOM90a.times.txt 

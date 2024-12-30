@@ -1,0 +1,1 @@
+100 6 200000 100 5 instances/DIMACS/R100_1gb.edgelist instances/DIMACS/R100_1gb.col.w solutions/DIMACS/R100_1gb.solution.txt times/DIMACS/R100_1gb.times.txt 

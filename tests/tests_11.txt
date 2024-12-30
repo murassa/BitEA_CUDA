@@ -1,0 +1,1 @@
+110 6 200000 100 5 instances/DIMACS/GEOM110b.edgelist instances/DIMACS/GEOM110b.col.w solutions/DIMACS/GEOM110b.solution.txt times/DIMACS/GEOM110b.times.txt 

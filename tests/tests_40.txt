@@ -1,0 +1,1 @@
+47 6 200000 100 5 instances/DIMACS/myciel5gb.edgelist instances/DIMACS/myciel5gb.col.w solutions/DIMACS/myciel5gb.solution.txt times/DIMACS/myciel5gb.times.txt 

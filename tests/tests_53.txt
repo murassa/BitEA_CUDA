@@ -1,0 +1,1 @@
+81 6 200000 100 5 instances/DIMACS/queen9_9g.edgelist instances/DIMACS/queen9_9g.col.w solutions/DIMACS/queen9_9g.solution.txt times/DIMACS/queen9_9g.times.txt 
