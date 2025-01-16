@@ -65,3 +65,18 @@ This is a test for the DSJC125.1g graph. The parameters are:
 
         This indicates that Vertex_id is colored by Color_id in the solution.
 
+#CUDA
+
+##Dependencies
+-nvcc
+-For linux
+-make
+-g++
+
+-For windows
+-Microsoft Visual Studio c++ distrubutions
+
+##Usage
+./BitEA tries all files in tests folder
+
+./BitEA <test_file> tries only selected file
