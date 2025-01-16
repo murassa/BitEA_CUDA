@@ -21,11 +21,31 @@
         }                                                                                               \
     }
 
-// int num_threads = SIZE / 4;
-// int num_blocks = 1;
+#define MEMORY_EXISTS(ptr) (ptr != nullptr && ptr != NULL)
+
+#define DELETE_ARRAY(ptr)   \
+    if (MEMORY_EXISTS(ptr)) \
+    {                       \
+        delete[] ptr;       \
+        ptr = nullptr;      \
+    }
+
+#define DELETE_ARRAY_PTR(ptr)                                      \
+    if (MEMORY_EXISTS(ptr))                                        \
+    {                                                              \
+        printf("Deleting %p at %s:%d\n", ptr, __FILE__, __LINE__); \
+        free(ptr);                                                 \
+        ptr = nullptr;                                             \
+    }
 
 // remaining gen count for each thread (multi-thread safe)
 __device__ int remaining_gen_count;
+
+__device__ int best_i_global = 0;
+__device__ int best_i_lock = 0;
+
+__device__ GpuTimer *gpuTimer;
+__device__ float elapsed_time = 0.0;
 
 __device__ curandState *curand_state;
 
@@ -46,6 +66,11 @@ __device__ inline int __rand()
 
 __device__ int lock_pair(int p1, int p2, int *mutexes, int population_size)
 {
+    // Ensure indices are in bounds
+    if (p1 >= population_size || p2 >= population_size || p1 < 0 || p2 < 0)
+    {
+        return 0;
+    }
     int combined = min(p1, p2) * population_size + max(p1, p2);
     return atomicCAS(&mutexes[combined], 0, 1) == 0;
 }
@@ -59,13 +84,6 @@ __device__ void unlock_pair(int p1, int p2, int *mutexes, int population_size)
 __device__ int __popcountl(uint64_t n)
 {
     return __popcll(n);
-    // int cnt = 0;
-    // while (n)
-    // {
-    //     n &= n - 1; // key point
-    //     ++cnt;
-    // }
-    // return cnt;
 }
 
 __device__ int __count_conflicts(int graph_size, const block_t *color, const block_t *edges, int *conflict_count)
@@ -122,28 +140,25 @@ __device__ void fix_conflicts(int graph_size, const block_t *edges, const int *w
     }
 }
 
-
-__device__ void merge_and_fix(int graph_size, const block_t *edges, const int *weights, const block_t **parent_color, block_t *child_color, block_t *pool, int *pool_count, block_t *used_vertex_list, int *used_vertex_count, int *conflict_count)
+__device__ void merge_and_fix(int graph_size, const block_t *edges, const int *weights, const block_t **parent_color, block_t *child_color, block_t *pool, int *pool_count, block_t *used_vertex_list, int *used_vertex_count)
 {
     // Merge the two colors
     int temp_v_count = 0;
-    if (parent_color[0] != NULL && parent_color[1] != NULL)
+    if (parent_color[0] != nullptr && parent_color[1] != nullptr)
         for (int i = 0; i < (TOTAL_BLOCK_NUM(graph_size)); i++)
         {
             child_color[i] = ((parent_color[0][i] | parent_color[1][i]) & ~(used_vertex_list[i]));
             temp_v_count += __popcountl(child_color[i]);
-
-            // printf("child_color[%d]: %llu | parent_color[0][%d]: %llu | parent_color[1][%d]: %llu | used_vertex_list[%d]: %llu | temp_v_count: %d\n", i, child_color[i], i, parent_color[0][i], i, parent_color[1][i], i, used_vertex_list[i], temp_v_count);
         }
 
-    else if (parent_color[0] != NULL)
+    else if (parent_color[0] != nullptr)
         for (int i = 0; i < (TOTAL_BLOCK_NUM(graph_size)); i++)
         {
             child_color[i] = (parent_color[0][i] & ~(used_vertex_list[i]));
             temp_v_count += __popcountl(child_color[i]);
         }
 
-    else if (parent_color[1] != NULL)
+    else if (parent_color[1] != nullptr)
         for (int i = 0; i < (TOTAL_BLOCK_NUM(graph_size)); i++)
         {
             child_color[i] = (parent_color[1][i] & ~(used_vertex_list[i]));
@@ -164,6 +179,7 @@ __device__ void merge_and_fix(int graph_size, const block_t *edges, const int *w
         pool[i] = 0;
     (*pool_count) = 0;
 
+    int *conflict_count = (int *)malloc(graph_size * sizeof(int));
     for (int i = 0; i < graph_size; i++)
         conflict_count[i] = 0;
 
@@ -172,6 +188,8 @@ __device__ void merge_and_fix(int graph_size, const block_t *edges, const int *w
 
     // Fix the conflicts.
     fix_conflicts(graph_size, edges, weights, conflict_count, &total_conflicts, child_color, pool, pool_count);
+
+    free(conflict_count);
 }
 
 __device__ void search_back(int graph_size, const block_t *edges, const int *weights, block_t *child, int color_count, block_t *pool, int *pool_count)
@@ -232,7 +250,6 @@ __device__ void search_back(int graph_size, const block_t *edges, const int *wei
         }
     }
 }
-
 
 __device__ void local_search(int graph_size, const block_t *edges, const int *weights, block_t *child, int color_count, block_t *pool, int *pool_count)
 {
@@ -306,7 +323,6 @@ __device__ void local_search(int graph_size, const block_t *edges, const int *we
     free(conflict_array);
 }
 
-
 __device__ int get_rand_color(int max_color_num, int colors_used, block_t used_color_list[])
 {
     // There are no available colors.
@@ -342,7 +358,7 @@ __device__ int get_rand_color(int max_color_num, int colors_used, block_t used_c
 }
 
 __device__ int crossover(int graph_size, const block_t *edges, const int *weights, int color_num1, int color_num2, const block_t *parent1, const block_t *parent2,
-                         int target_color_count, block_t *child, int *child_color_count, int *uncolored, int *conflict_count)
+                         int target_color_count, block_t *child, int *child_color_count, int *uncolored)
 {
     // max number of colors of the two parents.
     int max_color_num = color_num1 > color_num2 ? color_num1 : color_num2;
@@ -384,10 +400,10 @@ __device__ int crossover(int graph_size, const block_t *edges, const int *weight
             // Pick 2 random colors.
             color1 = get_rand_color(color_num1, i, used_color_list[0]);
             color2 = get_rand_color(color_num2, i, used_color_list[1]);
-            chosen_parent_colors[0] = color1 == -1 ? NULL : &parent1[color1 * TOTAL_BLOCK_NUM(graph_size)];
-            chosen_parent_colors[1] = color2 == -1 ? NULL : &parent2[color2 * TOTAL_BLOCK_NUM(graph_size)];
+            chosen_parent_colors[0] = color1 == -1 ? nullptr : &parent1[color1 * TOTAL_BLOCK_NUM(graph_size)];
+            chosen_parent_colors[1] = color2 == -1 ? nullptr : &parent2[color2 * TOTAL_BLOCK_NUM(graph_size)];
 
-            merge_and_fix(graph_size, edges, weights, chosen_parent_colors, &child[i * TOTAL_BLOCK_NUM(graph_size)], pool, &pool_count, used_vertex_list, &used_vertex_count, conflict_count);
+            merge_and_fix(graph_size, edges, weights, chosen_parent_colors, &child[i * TOTAL_BLOCK_NUM(graph_size)], pool, &pool_count, used_vertex_list, &used_vertex_count);
 
             // If all of the vertices were used and the pool is empty, exit the loop.
         }
@@ -415,7 +431,7 @@ __device__ int crossover(int graph_size, const block_t *edges, const int *weight
             used_vertex_list[i] = 0xFF;
     }
 
-    // local_search(graph_size, edges, weights, child, target_color_count, pool, &pool_count);
+    local_search(graph_size, edges, weights, child, target_color_count, pool, &pool_count);
 
     // If the pool is not empty, randomly allocate the remaining vertices in the colors.
     int fitness = 0, temp_block;
@@ -456,21 +472,20 @@ __device__ int crossover(int graph_size, const block_t *edges, const int *weight
 }
 
 __global__ void d_BitEA(int graph_size, block_t **population, block_t **children, int *color_count, int *uncolored, int *fitness, const block_t *edges, int *weights, int population_size,
-                        int base_color_count, block_t *best_solution, int *best_fitness, float *best_solution_time, int *uncolored_num, int **conflict_count, int *best_i_result, int *mutexes)
+                        int base_color_count, block_t *best_solution, int *best_fitness, float *best_solution_time, int *uncolored_num, int *mutexes, int *result)
 {
     // Get the thread ID
     int id = threadIdx.x + blockIdx.x * blockDim.x;
 
     bool has_printed = false;
-
-    int best_i = 0;
     int target_color = base_color_count;
-    int temp_uncolored;
-    int child_colors, temp_fitness;
-    int bad_parent;
+    int temp_uncolored = 0;
+    int child_colors = 0, temp_fitness = 0;
+    int bad_parent = 0;
 
     long long start = 0;
     auto end = clock64();
+    auto best_end = clock64();
 
     while (atomicSub(&remaining_gen_count, 1) > 0)
     {
@@ -479,26 +494,42 @@ __global__ void d_BitEA(int graph_size, block_t **population, block_t **children
         int parent1 = -1, parent2 = -1;
 
         // Select first parent
-        do {           
-            // Select the parents
-            do
-            {
-                if (parent1 != -1)
-                    parent1 = (parent1 + population_size / 3) % population_size;
-                else
-                    parent1 = __rand() % population_size;
-            } while (mutexes[parent1] == 1);
-            
+        // In d_BitEA kernel
+        do
+        {
+            // Reset parents if invalid
+            if (parent1 >= population_size)
+                parent1 = -1;
+            if (parent2 >= population_size)
+                parent2 = -1;
 
-            // Select the second parent, ensuring it's different from the first
-            do {
-                if (parent2 != -1)
-                    parent2 = (parent2 + population_size / 3) % population_size;
-                else
+            // Select first parent
+            if (parent1 == -1)
+            {
+                parent1 = __rand() % population_size;
+            }
+            else
+            {
+                parent1 = (parent1 + 1) % population_size;
+            }
+
+            // Select second parent
+            if (parent2 == -1)
+            {
+                do
+                {
                     parent2 = __rand() % population_size;
-            } while (parent2 == parent1 || mutexes[parent2] == 1); // Ensure the parents are different and not locked
-            
-            // Try to lock the pair
+                } while (parent2 == parent1);
+            }
+            else
+            {
+                do
+                {
+                    parent2 = (parent2 + 1) % population_size;
+                } while (parent2 == parent1);
+            }
+
+            // Try to lock both parents
             if (lock_pair(parent1, parent2, mutexes, population_size))
             {
                 parent1_locked = 1;
@@ -510,14 +541,14 @@ __global__ void d_BitEA(int graph_size, block_t **population, block_t **children
                 parent2_locked = 0;
             }
 
-        } while ((!parent1_locked || !parent2_locked));
+        } while (!parent1_locked || !parent2_locked);
 
         for (int i = 0; i < base_color_count * TOTAL_BLOCK_NUM(graph_size); i++)
         {
             children[id][i] = 0;
         }
 
-        temp_fitness = crossover(graph_size, edges, weights, color_count[parent1], color_count[parent2], population[parent1], population[parent2], target_color, children[id], &child_colors, &temp_uncolored, conflict_count[id]);
+        temp_fitness = crossover(graph_size, edges, weights, color_count[parent1], color_count[parent2], population[parent1], population[parent2], target_color, children[id], &child_colors, &temp_uncolored);
 
         // Choose the bad parent.
         if (fitness[parent1] <= fitness[parent2] && color_count[parent1] <= color_count[parent2])
@@ -538,17 +569,23 @@ __global__ void d_BitEA(int graph_size, block_t **population, block_t **children
             atomicExch(&fitness[bad_parent], temp_fitness);
             atomicExch(&uncolored[bad_parent], temp_uncolored);
 
-            if (temp_fitness < fitness[best_i] ||
-                (temp_fitness == fitness[best_i] && child_colors < color_count[best_i]))
+            if (atomicCAS(&best_i_lock, 0, 1) == 0)
             {
-                best_i = bad_parent;
+                if (temp_fitness < fitness[best_i_global] || (temp_fitness == fitness[best_i_global] && child_colors < color_count[best_i_global]))
+                {
+                    best_i_global = bad_parent;
+                    // if (temp_fitness == 0 && temp_uncolored == 0)
+                    // {
+                    //     atomicSub(&remaining_gen_count, remaining_gen_count);
+                    // }
+                }
+                atomicExch(&best_i_lock, 0);
             }
         }
 
         // Make the target harder if it was found.
         if (temp_fitness == 0)
         {
-            // is_valid1(graph_size, edges, color_count[best_i], population[best_i]);
             target_color = child_colors - 1;
         }
 
@@ -565,76 +602,86 @@ __global__ void d_BitEA(int graph_size, block_t **population, block_t **children
         }
     }
 
+    // synchronize threads
+    __syncthreads();
+
     // Copy the best solution to the global memory
     if (id == 0)
     {
         // memcpy(best_solution, population[best_i], base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
         for (int i = 0; i < base_color_count * TOTAL_BLOCK_NUM(graph_size); i++)
         {
-            best_solution[i] = population[best_i][i];
+            best_solution[i] = population[best_i_global][i];
         }
-        *best_fitness = fitness[best_i];
-        *uncolored_num = uncolored[best_i];
-        *best_solution_time = (float)(end - start) / 1000000;
-        *best_i_result = best_i;
+        *best_fitness = fitness[best_i_global];
+        *uncolored_num = uncolored[best_i_global];
+        *best_solution_time = remaining_gen_count;
+
+        *result = color_count[best_i_global];
 
         if (has_printed)
             printf("\033[A\033[K");
     }
 }
 
-int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int base_color_count, int max_gen_num, block_t *best_solution, int *best_fitness, float *best_solution_time, int *uncolored_num)
+int BitEA(int graph_size, const block_t *edges, const int *weights, const int population_size, int base_color_count, int max_gen_num, block_t *best_solution, int *best_fitness, float *best_solution_time, int *uncolored_num)
 {
-    int num_threads = 256; // Threads per block
-    int num_blocks = 1; //((population_size) + num_threads - 1) / num_threads;
+    // int num_threads = 256; // Threads per block
+    // int num_blocks = ((population_size) + num_threads - 1) / num_threads / 2;
+
+    int num_blocks = population_size / 500;
+    int num_threads = 250;
+    if (num_blocks < 1)
+    {
+        num_blocks = 1;
+        num_threads = population_size / 2;
+    }
 
     int total_threads = num_threads * num_blocks;
 
     // // Create the random population.
     block_t **population = (block_t **)malloc(population_size * sizeof(block_t *));
-    block_t **children = (block_t **)malloc(total_threads * sizeof(block_t *));
-    int *color_count = (int *)malloc(population_size * sizeof(int));
-    int *uncolored = (int *)malloc(population_size * sizeof(int));
-    int *fitness = (int *)malloc(population_size * sizeof(int));
-    int *best_i_result = (int *)malloc(sizeof(int));
-
-    int **conflict_count = (int **)malloc(total_threads * sizeof(int *));
-
-    for (int i = 0; i < total_threads; i++)
-    {
-        children[i] = (block_t *)malloc(base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
-        memset(children[i], 0, base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
-        conflict_count[i] = (int *)malloc(graph_size * sizeof(int));
-        memset(conflict_count[i], 0, graph_size * sizeof(int));
-    }
+    // void* original_address = population;  // Store the original address immediately
+    // printf("Initial population address: %p\n", original_address);
+    int *color_count = new int[population_size];
+    int *uncolored = new int[population_size];
+    int *fitness = new int[population_size];
     for (int i = 0; i < population_size; i++)
     {
         population[i] = (block_t *)malloc(base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
-        memset(population[i], 0, base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
-        uncolored[i] = base_color_count;
+        // printf("Sub-array %d allocated: %p\n", i, (void*)population[i]);
         color_count[i] = base_color_count;
+        uncolored[i] = base_color_count;
         fitness[i] = __INT_MAX__;
+    }
+
+    // populate the population with 0
+    for (int i = 0; i < population_size; i++)
+    {
+        for (int j = 0; j < base_color_count * TOTAL_BLOCK_NUM(graph_size); j++)
+        {
+            population[i][j] = 0;
+        }
     }
 
     pop_complex_random(graph_size, edges, weights, population_size, population, base_color_count);
 
     // Device memory
-    block_t **d_population;
-    block_t **d_children;
-    block_t *d_edges;
-    int *d_weights;
-    int *d_color_count;
-    int *d_uncolored;
-    int *d_fitness;
-    int *d_best_i_result;
-
-    int **d_conflict_count;
+    block_t **d_population = nullptr;
+    block_t **d_children = nullptr;
+    block_t *d_edges = nullptr;
+    int *d_weights = nullptr;
+    int *d_color_count = nullptr;
+    int *d_uncolored = nullptr;
+    int *d_fitness = nullptr;
 
     // Best solution
-    block_t *d_best_solution;
-    int *d_best_fitness;
-    float *d_total_execution_time;
-    int *d_best_color_count;
+    block_t *d_best_solution = nullptr;
+    int *d_best_fitness = nullptr;
+    float *d_total_execution_time = nullptr;
+    int *d_best_color_count = nullptr;
+
+    int *d_result = nullptr;
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
@@ -643,109 +690,125 @@ int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int
         exit(1);
     }
 
-    // Allocate device memor
+    CUDA_CHECK(cudaDeviceSynchronize());
+
     CUDA_CHECK(cudaMalloc(&d_population, population_size * sizeof(block_t *)));
-    // Allocate and copy each row
     for (int i = 0; i < population_size; i++)
     {
         block_t *d_row;
-        size_t row_size = base_color_count * TOTAL_BLOCK_NUM((size_t)graph_size) * sizeof(block_t);
-
-        // Allocate memory for the row
-        CUDA_CHECK(cudaMalloc(&d_row, row_size));
-
-        // Copy data from host to device
-        CUDA_CHECK(cudaMemcpy(d_row, population[i], row_size, cudaMemcpyHostToDevice));
-
-        // Copy the device pointer to the device array of pointers
-        CUDA_CHECK(cudaMemcpy(&d_population[i], &d_row, sizeof(block_t *), cudaMemcpyHostToDevice));
+        size_t row_size = base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t);
+        CUDA_CHECK(cudaMalloc(&d_row, row_size);)
+        for (int j = 0; j < base_color_count * TOTAL_BLOCK_NUM(graph_size); j++)
+        {
+            block_t value = population[i][j];
+            CUDA_CHECK(cudaMemcpy(&d_row[j], &value, sizeof(block_t), cudaMemcpyHostToDevice);)
+        }
+        CUDA_CHECK(cudaMemcpy(&d_population[i], &d_row, sizeof(block_t *), cudaMemcpyHostToDevice);)
     }
 
-    // Allocate device memory for children
     CUDA_CHECK(cudaMalloc(&d_children, total_threads * sizeof(block_t *));)
-    // Allocate and copy each row
     for (int i = 0; i < total_threads; i++)
     {
         block_t *d_row;
-        size_t row_size = base_color_count * TOTAL_BLOCK_NUM((size_t)graph_size) * sizeof(block_t);
-
-        // Allocate memory for the row
+        size_t row_size = base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t);
         CUDA_CHECK(cudaMalloc(&d_row, row_size);)
-
-        // Copy data from host to device
-        CUDA_CHECK(cudaMemcpy(d_row, children[i], row_size, cudaMemcpyHostToDevice);)
-
-        // Copy the device pointer to the device array of pointers
+        for (int j = 0; j < base_color_count * TOTAL_BLOCK_NUM(graph_size); j++)
+        {
+            block_t value = 0;
+            CUDA_CHECK(cudaMemcpy(&d_row[j], &value, sizeof(block_t), cudaMemcpyHostToDevice);)
+        }
         CUDA_CHECK(cudaMemcpy(&d_children[i], &d_row, sizeof(block_t *), cudaMemcpyHostToDevice);)
     }
 
-    CUDA_CHECK(cudaMalloc(&d_conflict_count, total_threads * sizeof(int *));)
-    for (int i = 0; i < total_threads; i++)
+    CUDA_CHECK(cudaMalloc(&d_edges, graph_size * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));)
+    for (int i = 0; i < graph_size * TOTAL_BLOCK_NUM(graph_size); i++)
     {
-        int *d_row;
-        size_t row_size = graph_size * sizeof(int);
-
-        // Allocate memory for the row
-        CUDA_CHECK(cudaMalloc(&d_row, row_size);)
-
-        // Copy data from host to device
-        CUDA_CHECK(cudaMemcpy(d_row, conflict_count[i], row_size, cudaMemcpyHostToDevice);)
-
-        // Copy the device pointer to the device array of pointers
-        CUDA_CHECK(cudaMemcpy(&d_conflict_count[i], &d_row, sizeof(int *), cudaMemcpyHostToDevice);)
+        block_t value = edges[i];
+        CUDA_CHECK(cudaMemcpy(&d_edges[i], &value, sizeof(block_t), cudaMemcpyHostToDevice);)
     }
 
-    CUDA_CHECK(cudaMalloc(&d_edges, graph_size * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));)
-    CUDA_CHECK(cudaMemcpy(d_edges, edges, graph_size * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t), cudaMemcpyHostToDevice);)
-
     CUDA_CHECK(cudaMalloc(&d_weights, graph_size * sizeof(int));)
-    CUDA_CHECK(cudaMemcpy(d_weights, weights, graph_size * sizeof(int), cudaMemcpyHostToDevice);)
+    for (int i = 0; i < graph_size; i++)
+    {
+        int value = weights[i];
+        CUDA_CHECK(cudaMemcpy(&d_weights[i], &value, sizeof(int), cudaMemcpyHostToDevice);)
+    }
 
     CUDA_CHECK(cudaMalloc(&d_color_count, population_size * sizeof(int));)
-    CUDA_CHECK(cudaMemcpy(d_color_count, color_count, population_size * sizeof(int), cudaMemcpyHostToDevice);)
+    for (int i = 0; i < population_size; i++)
+    {
+        int value = color_count[i];
+        CUDA_CHECK(cudaMemcpy(&d_color_count[i], &value, sizeof(int), cudaMemcpyHostToDevice);)
+    }
 
     CUDA_CHECK(cudaMalloc(&d_uncolored, population_size * sizeof(int));)
-    CUDA_CHECK(cudaMemcpy(d_uncolored, uncolored, population_size * sizeof(int), cudaMemcpyHostToDevice);)
+    for (int i = 0; i < population_size; i++)
+    {
+        int value = uncolored[i];
+        CUDA_CHECK(cudaMemcpy(&d_uncolored[i], &value, sizeof(int), cudaMemcpyHostToDevice);)
+    }
 
     CUDA_CHECK(cudaMalloc(&d_fitness, population_size * sizeof(int));)
-    CUDA_CHECK(cudaMemcpy(d_fitness, fitness, population_size * sizeof(int), cudaMemcpyHostToDevice);)
+    for (int i = 0; i < population_size; i++)
+    {
+        int value = fitness[i];
+        CUDA_CHECK(cudaMemcpy(&d_fitness[i], &value, sizeof(int), cudaMemcpyHostToDevice);)
+    }
 
     CUDA_CHECK(cudaMalloc(&d_best_solution, base_color_count * TOTAL_BLOCK_NUM((size_t)graph_size) * sizeof(block_t));)
     CUDA_CHECK(cudaMalloc(&d_best_fitness, sizeof(int));)
     CUDA_CHECK(cudaMalloc(&d_total_execution_time, sizeof(float));)
     CUDA_CHECK(cudaMalloc(&d_best_color_count, sizeof(int));)
-    CUDA_CHECK(cudaMalloc(&d_best_i_result, sizeof(int));)
+    CUDA_CHECK(cudaMalloc(&d_result, sizeof(int));)
+
+    // printf("Graph size: %d\n", graph_size);
+
+    DELETE_ARRAY(color_count);
+    // printf("Color count deleted\n");
+    // fflush(stdout);
+    DELETE_ARRAY(uncolored);
+    // printf("Uncolored deleted\n");
+    // fflush(stdout);
+    DELETE_ARRAY(fitness);
+    // printf("Fitness deleted\n");
+    // fflush(stdout);
 
     int *d_mutexes;
-
-    // Allocate and initialize the mutex array on the device
-    cudaMalloc(&d_mutexes, population_size * sizeof(int));
-    cudaMemset(d_mutexes, 0, population_size * sizeof(int));
+    // When allocating mutexes array
+    int mutex_array_size = population_size * population_size;
+    cudaMalloc(&d_mutexes, mutex_array_size * sizeof(int));
+    cudaMemset(d_mutexes, 0, mutex_array_size * sizeof(int));
 
     // Allocate memory for curand_state
     curandState *d_curand_state;
     CUDA_CHECK(cudaMalloc(&d_curand_state, total_threads * sizeof(curandState)));
     CUDA_CHECK(cudaMemcpyToSymbol(curand_state, &d_curand_state, sizeof(curandState *)));
 
-    // Initialize curand_state
-    setup_kernel<<<num_blocks, num_threads>>>(time(NULL));
-    CUDA_CHECK(cudaDeviceSynchronize());
-
     // Copy host remaining_gen_count to device
     int host_remaining_gen_count = max_gen_num;
     CUDA_CHECK(cudaMemcpyToSymbol(remaining_gen_count, &host_remaining_gen_count, sizeof(int)));
 
-    #ifdef _WIN32
+    // Initialize curand_state
+    setup_kernel<<<num_blocks, num_threads>>>(time(nullptr));
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+#ifdef _WIN32
     auto start_time = std::chrono::high_resolution_clock::now();
-    #endif
-    #ifdef __linux__
+#endif
+#ifdef __linux__
     struct timespec start_time;
     clock_gettime(CLOCK_MONOTONIC, &start_time);
-    #endif
+#endif
 
     // Run the algorithm.
     d_BitEA<<<num_blocks, num_threads>>>(graph_size, d_population, d_children, d_color_count, d_uncolored, d_fitness, d_edges, d_weights, population_size, base_color_count, d_best_solution,
-                                         d_best_fitness, d_total_execution_time, d_best_color_count, d_conflict_count, d_best_i_result, d_mutexes);
+                                         d_best_fitness, d_total_execution_time, d_best_color_count, d_mutexes, d_result);
+
+    // printf("Current population address: %p\n", (void*)population);
+    // printf("Original population address: %p\n", original_address);
+    // if (population != original_address) {
+    //     printf("WARNING: Population pointer has changed!\n");
+    // }
 
     // get last cuda error
     err = cudaGetLastError();
@@ -758,72 +821,96 @@ int BitEA(int graph_size, block_t *edges, int *weights, int population_size, int
     // Wait for the kernel to finish.
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    #ifdef _WIN32
+#ifdef _WIN32
     auto end_time = std::chrono::high_resolution_clock::now();
     *best_solution_time = std::chrono::duration_cast<std::chrono::duration<float>>(end_time - start_time).count();
-    #endif
-    #ifdef __linux__
+#endif
+#ifdef __linux__
     struct timespec end_time;
     clock_gettime(CLOCK_MONOTONIC, &end_time);
     *best_solution_time = (end_time.tv_sec - start_time.tv_sec) + (end_time.tv_nsec - start_time.tv_nsec) / 1000000000.0;
-    #endif
+#endif
 
     // Copy the results back to the host.
-    CUDA_CHECK(cudaMemcpy(best_solution, d_best_solution, base_color_count * TOTAL_BLOCK_NUM((size_t)graph_size) * sizeof(block_t), cudaMemcpyDeviceToHost);)
+    // CUDA_CHECK(cudaMemcpy(best_solution, d_best_solution, base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t), cudaMemcpyDeviceToHost);)
+    block_t *d_best_solution_ptr = (block_t *)malloc(base_color_count * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
+    for (int i = 0; i < base_color_count * TOTAL_BLOCK_NUM(graph_size); i++)
+    {
+        block_t value;
+        CUDA_CHECK(cudaMemcpy(&value, &d_best_solution[i], sizeof(block_t), cudaMemcpyDeviceToHost);)
+        d_best_solution_ptr[i] = value;
+        best_solution[i] = d_best_solution_ptr[i];
+    }
     CUDA_CHECK(cudaMemcpy(best_fitness, d_best_fitness, sizeof(int), cudaMemcpyDeviceToHost);)
-    // CUDA_CHECK(cudaMemcpy(best_solution_time, d_total_execution_time, sizeof(float), cudaMemcpyDeviceToHost);)
     CUDA_CHECK(cudaMemcpy(uncolored_num, d_best_color_count, sizeof(int), cudaMemcpyDeviceToHost);)
-    CUDA_CHECK(cudaMemcpy(best_i_result, d_best_i_result, sizeof(int), cudaMemcpyDeviceToHost);)
-    CUDA_CHECK(cudaMemcpy(fitness, d_fitness, population_size * sizeof(int), cudaMemcpyDeviceToHost);)
-    CUDA_CHECK(cudaMemcpy(color_count, d_color_count, population_size * sizeof(int), cudaMemcpyDeviceToHost);)
-    CUDA_CHECK(cudaMemcpy(uncolored, d_uncolored, population_size * sizeof(int), cudaMemcpyDeviceToHost);)
-    CUDA_CHECK(cudaMemcpy(edges, d_edges, graph_size * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t), cudaMemcpyDeviceToHost);)
-    CUDA_CHECK(cudaMemcpy(weights, d_weights, graph_size * sizeof(int), cudaMemcpyDeviceToHost);)
+    int result = -1;
+    CUDA_CHECK(cudaMemcpy(&result, d_result, sizeof(int), cudaMemcpyDeviceToHost);)
 
     // Free device memory
-    CUDA_CHECK(cudaFree(d_population);)
-    // for (int i = 0; i < population_size; i++)
-    // {
-    //     CUDA_CHECK(cudaFree(population[i]);)
-    // }
-    CUDA_CHECK(cudaFree(d_children);)
-    // for (int i = 0; i < num_threads; i++)"
-    // {
-    //     CUDA_CHECK(cudaFree(children[i]);)
-    // }
-    CUDA_CHECK(cudaFree(d_conflict_count);)
-    // for (int i = 0; i < num_threads; i++)
-    // {
-    //     CUDA_CHECK(cudaFree(conflict_count[i]);)
-    // }
-    CUDA_CHECK(cudaFree(d_edges);)
-    CUDA_CHECK(cudaFree(d_weights);)
-    CUDA_CHECK(cudaFree(d_color_count);)
-    CUDA_CHECK(cudaFree(d_uncolored);)
-    CUDA_CHECK(cudaFree(d_fitness);)
-    CUDA_CHECK(cudaFree(d_best_solution);)
-    CUDA_CHECK(cudaFree(d_best_fitness);)
-    CUDA_CHECK(cudaFree(d_total_execution_time);)
-    CUDA_CHECK(cudaFree(d_best_color_count);)
-    CUDA_CHECK(cudaFree(d_best_i_result);)
-    CUDA_CHECK(cudaFree(d_mutexes);)
-
-    // Free host memory
     for (int i = 0; i < population_size; i++)
     {
-        free(population[i]);
+        block_t *d_row;
+        CUDA_CHECK(cudaMemcpy(&d_row, &d_population[i], sizeof(block_t *), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaFree(d_row));
     }
-    free(population);
+    CUDA_CHECK(cudaFree(d_population));
+
+    // Free children array
     for (int i = 0; i < total_threads; i++)
     {
-        free(children[i]);
-        free(conflict_count[i]);
+        block_t *d_row;
+        CUDA_CHECK(cudaMemcpy(&d_row, &d_children[i], sizeof(block_t *), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaFree(d_row));
     }
-    free(children);
-    free(conflict_count);
-    free(color_count);
-    free(uncolored);
-    free(fitness);
+    CUDA_CHECK(cudaFree(d_children));
 
-    return color_count[*best_i_result];
+    // Free other allocations
+    CUDA_CHECK(cudaFree(d_edges));
+    CUDA_CHECK(cudaFree(d_weights));
+    CUDA_CHECK(cudaFree(d_color_count));
+    CUDA_CHECK(cudaFree(d_uncolored));
+    CUDA_CHECK(cudaFree(d_fitness));
+    CUDA_CHECK(cudaFree(d_best_solution));
+    CUDA_CHECK(cudaFree(d_best_fitness));
+    CUDA_CHECK(cudaFree(d_total_execution_time));
+    CUDA_CHECK(cudaFree(d_best_color_count));
+    CUDA_CHECK(cudaFree(d_result));
+    CUDA_CHECK(cudaFree(d_mutexes));
+    CUDA_CHECK(cudaFree(d_curand_state));
+
+    cudaDeviceReset();
+
+    cudaError_t cuda_err = cudaGetLastError();
+    if (cuda_err != cudaSuccess)
+    {
+        fprintf(stderr, "CUDA Error: %s\n", cudaGetErrorString(cuda_err));
+        exit(1);
+    }
+
+    // printf("Result: %d\n", result);
+
+    // When freeing, only free sub-arrays but NOT the main array yet
+    for (int i = 0; i < population_size; i++)
+    {
+        // printf("About to free sub-array %d: %p\n", i, (void*)population[i]);
+        if (population[i])
+        {
+            free(population[i]);
+            // printf("Freed sub-array %d\n", i);
+            population[i] = nullptr;
+        }
+    }
+
+    // Now try to read the main array to verify it's still valid
+    // printf("Main array still at: %p\n", (void*)population);
+    // for (int i = 0; i < population_size; i++) {
+    //     printf("Sub-array pointer %d is now: %p\n", i, (void*)population[i]);
+    // }
+
+    // Finally try to free the main array
+    // printf("About to free main array: %p\n", (void*)population);
+    free(population); // Try direct free instead of DELETE_ARRAY_PTR
+    population = nullptr;
+
+    return result;
 }

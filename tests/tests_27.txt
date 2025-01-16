@@ -1,1 +1,1 @@
-60 6 200000 100 5 instances/DIMACS/GEOM60.edgelist instances/DIMACS/GEOM60.col.w solutions/DIMACS/GEOM60.solution.txt times/DIMACS/GEOM60.times.txt 
+60 6 30000 2000 5 instances/DIMACS/GEOM60.edgelist instances/DIMACS/GEOM60.col.w solutions/DIMACS/GEOM60.solution.txt times/DIMACS/GEOM60.times.txt 

@@ -1,1 +1,1 @@
-120 6 200000 100 5 instances/DIMACS/GEOM120b.edgelist instances/DIMACS/GEOM120b.col.w solutions/DIMACS/GEOM120b.solution.txt times/DIMACS/GEOM120b.times.txt 
+120 17 30000 2000 5 instances/DIMACS/GEOM120b.edgelist instances/DIMACS/GEOM120b.col.w solutions/DIMACS/GEOM120b.solution.txt times/DIMACS/GEOM120b.times.txt 

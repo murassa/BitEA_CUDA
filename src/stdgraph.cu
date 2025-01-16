@@ -1,5 +1,3 @@
-#define _GNU_SOURCE
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -66,7 +64,6 @@ int comp_crit_3(const void *a, const void *b, void *weights)
 int popcountl(uint64_t n)
 {
     int cnt = 0;
-    // printf("Popcount %ld\n", n);
     while (n)
     {
         n &= n - 1; // key point
@@ -75,71 +72,71 @@ int popcountl(uint64_t n)
     return cnt;
 }
 
-void pop_complex_random(int graph_size, block_t *edges, const int *weights, int pop_size, block_t **population, int max_color)
+void pop_complex_random(int graph_size, const block_t *edges, const int *weights, int pop_size, block_t **population, int max_color)
 {
-    int total_blocks = TOTAL_BLOCK_NUM(graph_size);
-    block_t **edges_p = (block_t **)malloc(graph_size * sizeof(block_t *));
+    int *criteria = (int *)malloc(3 * graph_size * sizeof(int));
     for (int i = 0; i < graph_size; i++)
     {
-        edges_p[i] = edges + (i * total_blocks);
-    }
-
-    int **criteria = (int **)malloc(3 * sizeof(int *));
-    for (int i = 0; i < 3; i++)
-    {
-        criteria[i] = (int *)malloc(graph_size * sizeof(int));
-    }
-    for (int i = 0; i < graph_size; i++)
-    {
-        criteria[0][i] = i;
-        criteria[1][i] = i;
-        criteria[2][i] = i;
+        criteria[0 * graph_size + i] = i;
+        criteria[1 * graph_size + i] = i;
+        criteria[2 * graph_size + i] = i;
     }
 
     int *degrees = (int *)malloc(graph_size * sizeof(int));
+    for (int i = 0; i < graph_size; i++)
+        degrees[i] = 0;
+    if (degrees == nullptr)
+    {
+        printf("Could not allocate memory for degrees.\n");
+        return;
+    }
     count_edges(graph_size, edges, degrees);
 
     const int *metrics[2] = {weights, degrees};
 
 #ifdef _WIN32
-    qsort_s(criteria[0], graph_size, sizeof(int), comp_crit_1, (void *)metrics);
-    qsort_s(criteria[1], graph_size, sizeof(int), comp_crit_2, (void *)metrics);
-    qsort_s(criteria[2], graph_size, sizeof(int), comp_crit_3, (void *)weights);
+    qsort_s(&criteria[0 * graph_size], graph_size, sizeof(int), comp_crit_1, (void *)metrics);
+    qsort_s(&criteria[1 * graph_size], graph_size, sizeof(int), comp_crit_2, (void *)metrics);
+    qsort_s(&criteria[2 * graph_size], graph_size, sizeof(int), comp_crit_3, (void *)weights);
 #endif
 
 #ifdef __linux__
-    qsort_r(criteria[0], graph_size, sizeof(int), comp_crit_1, (void *)metrics);
-    qsort_r(criteria[1], graph_size, sizeof(int), comp_crit_2, (void *)metrics);
-    qsort_r(criteria[2], graph_size, sizeof(int), comp_crit_3, (void *)weights);
+    qsort_r(&criteria[0 * graph_size], graph_size, sizeof(int), comp_crit_1, (void *)metrics);
+    qsort_r(&criteria[1 * graph_size], graph_size, sizeof(int), comp_crit_2, (void *)metrics);
+    qsort_r(&criteria[2 * graph_size], graph_size, sizeof(int), comp_crit_3, (void *)weights);
 #endif
 
-    block_t *adjacent_colors = (block_t *)calloc(total_blocks, sizeof(block_t));
-
+    block_t *adjacent_colors = (block_t *)malloc(TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
+    int current_vert;
+    int i, j, k;
     for (int indiv_id = 0; indiv_id < pop_size; indiv_id++)
     {
-        block_t **indiv = (block_t **)malloc(max_color * sizeof(block_t *));
-        for (int i = 0; i < max_color; i++)
+        // set population[indiv_id] all 0
+        for (i = 0; i < max_color * TOTAL_BLOCK_NUM(graph_size); i++)
+            population[indiv_id][i] = 0;
+        
+        for (i = 0; i < graph_size; i++)
         {
-            indiv[i] = (block_t *)calloc(total_blocks, sizeof(block_t));
-        }
-
-        for (int i = 0; i < graph_size; i++)
-        {
-            int current_vert;
-            if (indiv_id < 40)
-                current_vert = criteria[0][i];
-            else if (indiv_id < 80)
-                current_vert = criteria[1][i];
+            if (indiv_id < pop_size * 0.4)
+                current_vert = criteria[0 * graph_size + i];
+            else if (indiv_id < pop_size * 0.8)
+                current_vert = criteria[1 * graph_size + i];
             else
-                current_vert = criteria[2][i];
+                current_vert = criteria[2 * graph_size + i];
 
-            memset(adjacent_colors, 0, total_blocks * sizeof(block_t));
-
-            for (int j = 0; j < total_blocks; j++)
+            // Initialize the temporary data.
+            for (j = 0; j < TOTAL_BLOCK_NUM(graph_size); j++)
+                adjacent_colors[j] = 0;
+            for (j = 0; j < TOTAL_BLOCK_NUM(graph_size); j++)
             {
-                for (int k = 0; k < max_color; k++)
+                for (k = 0; k < max_color; k++)
                 {
-                    if (edges_p[current_vert][j] & indiv[k][j])
+                    // SET_COLOR(adjacent_colors, edges[current_vert][j] & (*indiv)[k][j] & 1);
+                    if (current_vert * TOTAL_BLOCK_NUM(graph_size) + j >= graph_size * TOTAL_BLOCK_NUM(graph_size))
+                    {
+                        printf("Error: %d %d %d\n", current_vert, j, graph_size);
+                    }
+                    if (edges[current_vert * TOTAL_BLOCK_NUM(graph_size) + j] & (population[indiv_id])[k * TOTAL_BLOCK_NUM(graph_size) + j])
                     {
                         SET_COLOR(adjacent_colors, k);
                         break;
@@ -147,51 +144,37 @@ void pop_complex_random(int graph_size, block_t *edges, const int *weights, int 
                 }
             }
 
-            int j;
+            // Find the first unused color (starting from 0) and assign this vertex to it.
             for (j = 0; j < max_color; j++)
             {
                 if (!CHECK_COLOR(adjacent_colors, j))
                 {
-                    SET_COLOR(indiv[j], current_vert);
-                    break;
+                    (population[indiv_id])[j * TOTAL_BLOCK_NUM(graph_size) + ((current_vert) / (sizeof(block_t) * 8))] |= ((block_t)1 << ((current_vert) % (sizeof(block_t) * 8)));
+                     break;
                 }
             }
 
             if (j == max_color)
-                SET_COLOR(indiv[rand() % max_color], current_vert);
+                (population[indiv_id])[rand() % max_color * TOTAL_BLOCK_NUM(graph_size) + ((current_vert) / (sizeof(block_t) * 8))] |= ((block_t)1 << ((current_vert) % (sizeof(block_t) * 8)));
         }
-
-        population[indiv_id] = (block_t *)malloc(max_color * total_blocks * sizeof(block_t));
-        for (int i = 0; i < max_color; i++)
-        {
-            memcpy(population[indiv_id] + (i * total_blocks), indiv[i], total_blocks * sizeof(block_t));
-            free(indiv[i]);
-        }
-        free(indiv);
     }
 
-    free(criteria[0]);
-    free(criteria[1]);
-    free(criteria[2]);
     free(criteria);
     free(adjacent_colors);
     free(degrees);
-    free(edges_p);
 }
 
 bool read_graph(const char *filename, int graph_size, block_t *edges, int offset_i)
 {
     FILE *fp = fopen(filename, "r");
 
-    if (fp == NULL)
+    if (fp == nullptr)
         return false;
 
-    memset(edges, 0, graph_size * TOTAL_BLOCK_NUM(graph_size) * sizeof(block_t));
-
     char buffer[64];
-    char *token, *saveptr;
-    int row, column;
-    while (fgets(buffer, 64, fp) != NULL)
+    char *token = nullptr, *saveptr = nullptr;
+    int row = 0, column = 0;
+    while (fgets(buffer, 64, fp) != nullptr)
     {
         buffer[strcspn(buffer, "\n")] = 0;
 
@@ -205,32 +188,31 @@ bool read_graph(const char *filename, int graph_size, block_t *edges, int offset
             break;
         row = atoi(token) + offset_i;
 #ifdef _WIN32
-        token = strtok_s(NULL, " ", &saveptr);
+        token = strtok_s(nullptr, " ", &saveptr);
 #endif
 #ifdef __linux__
-        token = strtok_r(NULL, " ", &saveptr);
+        token = strtok_r(nullptr, " ", &saveptr);
 #endif
         column = atoi(token) + offset_i;
 
-        SET_EDGE(row, column, edges, graph_size);
+        (edges)[row * TOTAL_BLOCK_NUM(graph_size) + ((column) / (sizeof(block_t) * 8))] |= ((block_t)1 << ((column) % (sizeof(block_t) * 8)));
+        (edges)[column * TOTAL_BLOCK_NUM(graph_size) + ((row) / (sizeof(block_t) * 8))] |= ((block_t)1 << ((row) % (sizeof(block_t) * 8)));
     }
 
     fclose(fp);
     return true;
 }
 
-bool read_weights(const char *filename, int graph_size, int weights[])
+bool read_weights(const char *filename, int graph_size, int *weights)
 {
     FILE *fp = fopen(filename, "r");
 
-    if (fp == NULL)
+    if (fp == nullptr)
         return false;
-
-    memset(weights, 0, graph_size * sizeof(int));
 
     char buffer[64];
     int vertex = 0;
-    while (fgets(buffer, 64, fp) != NULL && vertex < graph_size)
+    while (fgets(buffer, 64, fp) != nullptr && vertex < graph_size)
     {
         buffer[strcspn(buffer, "\n")] = 0;
         weights[vertex] = atoi(buffer);
@@ -298,15 +280,15 @@ bool is_valid(int graph_size, const block_t *edges, int color_num, const block_t
     return !error_flag;
 }
 
-int count_edges(int graph_size, const block_t *edges, int degrees[])
+int count_edges(int graph_size, const block_t *edges, int *degrees)
 {
-    memset(degrees, 0, graph_size * sizeof(int));
-
     int i, j, total = 0;
     for (i = 0; i < graph_size; i++)
     {
         for (j = 0; j < TOTAL_BLOCK_NUM(graph_size); j++)
+        {
             degrees[i] += popcountl((edges)[i * TOTAL_BLOCK_NUM(graph_size) + j]);
+        }
         total += degrees[i];
     }
 

@@ -1,1 +1,1 @@
-144 6 200000 100 5 instances/DIMACS/queen12_12g.edgelist instances/DIMACS/queen12_12g.col.w solutions/DIMACS/queen12_12g.solution.txt times/DIMACS/queen12_12g.times.txt 
+144 15 30000 2000 5 instances/DIMACS/queen12_12g.edgelist instances/DIMACS/queen12_12g.col.w solutions/DIMACS/queen12_12g.solution.txt times/DIMACS/queen12_12g.times.txt 

@@ -1,1 +1,1 @@
-75 6 200000 100 5 instances/DIMACS/R75_9gb.edgelist instances/DIMACS/R75_9gb.col.w solutions/DIMACS/R75_9gb.solution.txt times/DIMACS/R75_9gb.times.txt 
+75 33 30000 2000 5 instances/DIMACS/R75_9gb.edgelist instances/DIMACS/R75_9gb.col.w solutions/DIMACS/R75_9gb.solution.txt times/DIMACS/R75_9gb.times.txt 

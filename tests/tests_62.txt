@@ -1,1 +1,1 @@
-50 6 200000 100 5 instances/DIMACS/R50_1gb.edgelist instances/DIMACS/R50_1gb.col.w solutions/DIMACS/R50_1gb.solution.txt times/DIMACS/R50_1gb.times.txt 
+50 3 30000 2000 5 instances/DIMACS/R50_1gb.edgelist instances/DIMACS/R50_1gb.col.w solutions/DIMACS/R50_1gb.solution.txt times/DIMACS/R50_1gb.times.txt 

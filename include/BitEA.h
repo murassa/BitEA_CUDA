@@ -5,6 +5,7 @@
 #include "stdgraph.h"
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include "gpuTimer.h"
 
 
 
@@ -22,18 +23,7 @@
  * @param uncolored_num Output pointer to the number of uncolored vertices in the best solution.
  * @returns Number of colors in the solution.
  */
-int BitEA(
-    int graph_size, 
-    block_t *edges, 
-    int *weights, 
-    int population_size,
-    int base_color_count, 
-    int max_gen_num, 
-    block_t *best_solution, 
-    int *best_fitness, 
-    float *best_solution_time,
-    int *uncolored_num
-);
+int BitEA(int graph_size, const block_t *edges, const int *weights, const int population_size, int base_color_count, int max_gen_num, block_t *best_solution, int *best_fitness, float *best_solution_time, int *uncolored_num);
 
 /**
  * @brief Get a random color not used previously in the used_color_list.
@@ -45,7 +35,7 @@ int BitEA(
  * @return If an unused color is found, return it. If all colors are 
  * used, return -1.
  */
-int get_rand_color(int max_color_num, int colors_used, block_t *used_color_list);
+__device__ int get_rand_color(int max_color_num, int colors_used, block_t *used_color_list);
 
 
 /**
@@ -61,7 +51,7 @@ int get_rand_color(int max_color_num, int colors_used, block_t *used_color_list)
  * @param used_vertex_list List of used vertices.
  * @return Return the total number of newly used vertices.
  */
-void merge_and_fix(
+__device__ void merge_and_fix(
     int graph_size,
     const block_t *edges, 
     const int *weights,
@@ -86,7 +76,7 @@ void merge_and_fix(
  * @param pool Pool.
  * @param pool_total Number of vertices in the pool.
  */
-void fix_conflicts(
+__device__ void fix_conflicts(
     int graph_size,
     const block_t *edges, 
     const int *weights,
@@ -98,7 +88,7 @@ void fix_conflicts(
 );
 
 
-void search_back(
+__device__ void search_back(
     int graph_size,
     const block_t *edges, 
     const int *weights,
@@ -109,7 +99,7 @@ void search_back(
 );
 
 
-void local_search(
+__device__ void local_search(
     int graph_size,
     const block_t *edges, 
     const int *weights,
@@ -138,7 +128,7 @@ void local_search(
  * @param uncolored Output pointer to the number of uncolored vertices in the best solution.
  * @return Return the fitness of the new individual.
  */
-int crossover (
+__device__ int crossover (
     int graph_size, 
     const block_t *edges, 
     const int *weights,

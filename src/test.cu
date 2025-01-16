@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <chrono>
+#include <memory>
 
 #include "BitEA.h"
 #include "stdgraph.h"
@@ -32,7 +33,7 @@ struct test_param
     struct test_return result;
 };
 
-void print_times(char *filename, float total_time, float k_time, int k, int population_size)
+void print_times(char *filename, float total_time, float k_time, int k, int population_size, int color_count)
 {
     // open file and write the time at the end of the file
     FILE *time_file = fopen(filename, "a+");
@@ -42,11 +43,11 @@ void print_times(char *filename, float total_time, float k_time, int k, int popu
         return;
     }
 
-    fprintf(time_file, "%f %f %d %d\n", total_time, k_time, k, population_size);
+    fprintf(time_file, "%f %f %d %d %d\n", total_time, k_time, k, population_size, color_count);
     fclose(time_file);
 }
 
-void test_graph(void *param, int *best_result)
+void test_graph(const void *param, int *best_result)
 {
     int size = ((struct test_param *)param)->size;
     int iteration_count = ((struct test_param *)param)->iteration_count;
@@ -57,21 +58,26 @@ void test_graph(void *param, int *best_result)
     char *result_filename = ((struct test_param *)param)->result_filename;
     char *time_filename = ((struct test_param *)param)->time_filename;
 
-    block_t *edges = (block_t *)malloc(sizeof(block_t) * (size_t)size * TOTAL_BLOCK_NUM((size_t)size));
+    auto edges_ptr = std::make_unique<block_t[]>(size * TOTAL_BLOCK_NUM(size));
+    for (int i = 0; i < size * TOTAL_BLOCK_NUM(size); i++)
+        edges_ptr[i] = 0;
+    block_t *edges = edges_ptr.get();
     if (!read_graph(graph_filename, size, edges, 0))
     {
         printf("Could not initialize graph from %s, exiting ...\n", graph_filename);
         return;
     }
 
-    int *edge_count = (int *)malloc(sizeof(int) * size);
+    auto edge_count_ptr = std::make_unique<int[]>(size);
     for (int i = 0; i < size; i++)
-        edge_count[i] = 0;
+        edge_count_ptr[i] = 0;
+    int *edge_count = edge_count_ptr.get();
     count_edges(size, edges, edge_count);
 
-    int *weights = (int *)malloc(sizeof(int) * size);
+    auto weights_ptr = std::make_unique<int[]>(size);
     for (int i = 0; i < size; i++)
-        weights[i] = 1;
+        weights_ptr[i] = 1;
+    int *weights = weights_ptr.get();
     if (strncmp(weight_filename, "null", 4) != 0)
     {
         if (!read_weights(weight_filename, size, weights))
@@ -82,7 +88,8 @@ void test_graph(void *param, int *best_result)
     }
     else
     {
-        memcpy(weights, edge_count, size * sizeof(int));
+        for (int i = 0; i < size; i++)
+            weights[i] = edge_count[i];
     }
 
     int max_edge_count = 0;
@@ -90,15 +97,9 @@ void test_graph(void *param, int *best_result)
         if (max_edge_count < edge_count[i])
             max_edge_count = edge_count[i];
 
-    float temp_time;
-    int temp_fitness, temp_color_count, temp_uncolored;
-    block_t *temp_colors = (block_t *)malloc(max_edge_count * TOTAL_BLOCK_NUM(size) * sizeof(block_t));
-    if (temp_colors == NULL)
-    {
-        printf("Memory allocation failed for temp_colors\n");
-        free(edges);
-        return;
-    }
+    float temp_time = 0;
+    int temp_fitness = 0, temp_color_count = 0, temp_uncolored = 0;
+    block_t *temp_colors = (block_t *)malloc(size * sizeof(block_t));
 
     float total_execution_time = 0;
 
@@ -143,11 +144,14 @@ void test_graph(void *param, int *best_result)
     //         temp_uncolored,
     //         total_execution_time);
 
+    // printf("best fitness: %d\n", *best_result);
+    // fflush(stdout);
+
     if (*best_result > temp_fitness)
     {
         *best_result = temp_fitness;
 
-        char buffer[512];
+        char buffer[2048];
         sprintf(buffer, "|  graph name   | target color | k time | k | cost | uncolored | total time |\n|%s|%3d|%10.6lf|%3d|%5d|%3d|%10.6lf|\n",
                 graph_filename,
                 target_color,
@@ -160,9 +164,13 @@ void test_graph(void *param, int *best_result)
         print_colors(result_filename, buffer, target_color, size, temp_colors);
     }
 
-    print_times(time_filename, total_execution_time, temp_time, temp_uncolored, population_size);
-    free(edges);
-    free(temp_colors);
+    // printf("filename: %s time: %f k: %d uncolored: %d population size: %d color count: %d\n", time_filename, total_execution_time, temp_time, temp_uncolored, population_size, temp_color_count);
+    // fflush(stdout);
+
+    print_times(time_filename, total_execution_time, temp_time, temp_uncolored, population_size, temp_color_count);
+
+    if (temp_colors != nullptr)
+        free(temp_colors);
 }
 
 int main(int argc, char *argv[])
@@ -206,8 +214,11 @@ int main(int argc, char *argv[])
     }
     else
     {
+        int i = 0;
+        if (argc == 3)
+            i = atoi(argv[2]);
         // file names are tests_0.txt, tests_1.txt, tests_2.txt, ...
-        for (int i = 0; i < 73; i++)
+        for (; i < 73; i++)
         {
             char filename[32];
             sprintf(filename, "tests/tests_%d.txt", i);
@@ -237,13 +248,14 @@ int main(int argc, char *argv[])
 
                 int best_fitness = __INT_MAX__;
                 for (; test_count > 0; test_count--)
+                {
                     test_graph(&param, &best_fitness);
+                }
             }
 
-            printf("--------------------------------\n");
+            printf("-----------------%d---------------\n", i);
 
             fclose(test_list_file);
         }
-        
     }
 }

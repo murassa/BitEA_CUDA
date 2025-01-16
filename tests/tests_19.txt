@@ -1,1 +1,1 @@
-30 6 200000 100 5 instances/DIMACS/GEOM30a.edgelist instances/DIMACS/GEOM30a.col.w solutions/DIMACS/GEOM30a.solution.txt times/DIMACS/GEOM30a.times.txt 
+30 6 30000 2000 5 instances/DIMACS/GEOM30a.edgelist instances/DIMACS/GEOM30a.col.w solutions/DIMACS/GEOM30a.solution.txt times/DIMACS/GEOM30a.times.txt 

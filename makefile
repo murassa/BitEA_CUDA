@@ -1,9 +1,9 @@
 SEARCH_PATH = include
-CFLAGS = -Wall -std=gnu17 -I$(SEARCH_PATH)
+CFLAGS = -Wall -std=gnu17 -I$(SEARCH_PATH) -lstdc++
 LINKFLAGS = -lm
 INCLUDES = -I/usr/local/cuda/include
-CUDAFLAGS = -I/usr/local/cuda/include -I$(SEARCH_PATH) -lstdc++  # Updated include path for nvcc
-NVCCFLAGS = -arch=sm_50
+CUDAFLAGS = -I/usr/local/cuda/include -I$(SEARCH_PATH) -lstdc++
+NVCCFLAGS = -arch=sm_50 -std=c++17
 
 ifdef DEBUG
   CFLAGS += -g -D WITH_DEBUG=1
@@ -33,7 +33,7 @@ obj/cu/%.o: src/%.cu
 
 # Link all object files to create the executable
 build: $(OBJECTS) $(CUDA_OBJECTS)
-	gcc $(CFLAGS) $(OBJECTS) $(CUDA_OBJECTS) -o BitEA $(LINKFLAGS) $(INCLUDES) -L/usr/local/cuda/lib64 -lcudart
+	g++ $(CFLAGS) $(OBJECTS) $(CUDA_OBJECTS) -o BitEA $(LINKFLAGS) $(INCLUDES) -L/usr/local/cuda/lib64 -lcudart
 
 # Clean up object files and executable
 clean:

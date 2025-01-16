@@ -1,1 +1,1 @@
-95 6 200000 100 5 instances/DIMACS/myciel6g.edgelist instances/DIMACS/myciel6g.col.w solutions/DIMACS/myciel6g.solution.txt times/DIMACS/myciel6g.times.txt 
+95 7 30000 2000 5 instances/DIMACS/myciel6g.edgelist instances/DIMACS/myciel6g.col.w solutions/DIMACS/myciel6g.solution.txt times/DIMACS/myciel6g.times.txt 

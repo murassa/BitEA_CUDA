@@ -1,1 +1,1 @@
-100 6 200000 100 5 instances/DIMACS/R100_5g.edgelist instances/DIMACS/R100_5g.col.w solutions/DIMACS/R100_5g.solution.txt times/DIMACS/R100_5g.times.txt 
+100 16 30000 2000 5 instances/DIMACS/R100_5g.edgelist instances/DIMACS/R100_5g.col.w solutions/DIMACS/R100_5g.solution.txt times/DIMACS/R100_5g.times.txt 

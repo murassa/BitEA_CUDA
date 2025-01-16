@@ -32,7 +32,7 @@
 
 bool read_graph(const char* filename, int graph_size, block_t *edges, int offset_i);
 
-bool read_weights(const char* filename, int size, int weights[]);
+bool read_weights(const char* filename, int size, int *weights);
 
 bool is_valid(
     int graph_size, 
@@ -41,7 +41,7 @@ bool is_valid(
     const block_t *colors
 );
 
-int count_edges(int graph_size, const block_t *edges, int degrees[]);
+int count_edges(int graph_size, const block_t *edges, int *degrees);
 
 void print_colors(
     const char *filename, 
@@ -74,7 +74,7 @@ void graph_color_random(
     int max_color
 );
 
-void pop_complex_random(int graph_size, block_t *edges, const int *weights, int pop_size, block_t **population, int max_color);
+void pop_complex_random(int graph_size, const block_t *edges, const int *weights, int pop_size, block_t **population, int max_color);
 
 int count_conflicts(
     int graph_size, 
