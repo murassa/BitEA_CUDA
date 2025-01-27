@@ -1,10 +1,15 @@
+# Paths and Flags
+CUDA_PATH ?= /usr/local/cuda
 SEARCH_PATH = include
-CFLAGS = -Wall -std=gnu17 -I$(SEARCH_PATH) -lstdc++
-LINKFLAGS = -lm
-INCLUDES = -I/usr/local/cuda/include
-CUDAFLAGS = -I/usr/local/cuda/include -I$(SEARCH_PATH) -lstdc++
-NVCCFLAGS = -arch=sm_50 -std=c++17
 
+# Compiler Flags
+CFLAGS = -Wall -std=gnu17 -I$(SEARCH_PATH) -lstdc++
+LINKFLAGS = -L$(CUDA_PATH)/lib64 -lcudart -lm
+INCLUDES = -I$(CUDA_PATH)/include -I$(SEARCH_PATH)
+CUDAFLAGS = -I$(SEARCH_PATH) -std=c++17
+NVCC_ARCH = -arch=sm_50  # Change 'sm_50' to your desired architecture
+
+# Debug Flags
 ifdef DEBUG
   CFLAGS += -g -D WITH_DEBUG=1
   NVCCFLAGS += -G -D WITH_DEBUG=1
@@ -13,13 +18,16 @@ else
   NVCCFLAGS += -O3
 endif
 
-# List of source files
+# Source Files and Object Files
 SOURCES := $(wildcard src/*.c)
 CUDA_SOURCES := $(wildcard src/*.cu)
-
-# Define object files (use different dirs for .c and .cu objects)
 OBJECTS := $(SOURCES:src/%.c=obj/c/%.o)
 CUDA_OBJECTS := $(CUDA_SOURCES:src/%.cu=obj/cu/%.o)
+
+# Check Environment
+check-env:
+	@nvcc --version || (echo "CUDA is not installed or not in PATH" && exit 1)
+	@gcc --version || (echo "GCC is not installed or not in PATH" && exit 1)
 
 # Compile C files with gcc
 obj/c/%.o: src/%.c
@@ -29,15 +37,15 @@ obj/c/%.o: src/%.c
 # Compile CUDA files with nvcc
 obj/cu/%.o: src/%.cu
 	@mkdir -p $(@D)
-	nvcc $(NVCCFLAGS) -c $< -o $@ $(CUDAFLAGS)
+	nvcc $(NVCC_ARCH) $(NVCCFLAGS) -c $< -o $@ $(INCLUDES)
 
-# Link all object files to create the executable
-build: $(OBJECTS) $(CUDA_OBJECTS)
-	g++ $(CFLAGS) $(OBJECTS) $(CUDA_OBJECTS) -o BitEA $(LINKFLAGS) $(INCLUDES) -L/usr/local/cuda/lib64 -lcudart
+# Link all object files using nvcc
+build: check-env $(OBJECTS) $(CUDA_OBJECTS)
+	nvcc $(NVCC_ARCH) $(NVCCFLAGS) $(OBJECTS) $(CUDA_OBJECTS) -o BitEA $(LINKFLAGS)
 
 # Clean up object files and executable
 clean:
 	rm -rf obj/ BitEA
 
-# Build by default without cleaning after
+# Build by default
 all: build
